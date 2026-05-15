@@ -34,14 +34,14 @@ src/
 
 | File | Người | Mô tả |
 |------|-------|-------|
-| `pages/HomePage.jsx` | FE1 | Upload + danh sách |
-| `components/DocumentUploader.jsx` | FE1 | Drag-drop, progress |
-| `components/DocumentList.jsx` | FE1 | List + delete |
-| `services/api.js` (upload, getDocuments, delete) | FE1 | API calls cho documents |
-| `pages/ResearchPage.jsx` | FE2 | Trang nghiên cứu |
-| `components/ChatBox.jsx` | FE2 | Streaming chat UI |
-| `components/SourceCard.jsx` | FE2 | Hiển thị nguồn |
-| `services/api.js` (askQuestion, askQuestionStream) | FE2 | API calls cho chat |
+| `pages/HomePage.jsx` | Minh Tiến | Upload + danh sách |
+| `components/DocumentUploader.jsx` | Minh Tiến | Drag-drop, progress |
+| `components/DocumentList.jsx` | Minh Tiến | List + delete |
+| `services/api.js` (upload, getDocuments, delete) | Minh Tiến | API calls cho documents |
+| `pages/ResearchPage.jsx` | Thanh Tùng | Trang nghiên cứu |
+| `components/ChatBox.jsx` | Thanh Tùng | Streaming chat UI |
+| `components/SourceCard.jsx` | Thanh Tùng | Hiển thị nguồn |
+| `services/api.js` (askQuestion, askQuestionStream) | Thanh Tùng | API calls cho chat |
 
 ## Quy tắc
 
