@@ -45,13 +45,13 @@ app/
 
 | File | Người | Mô tả |
 |------|-------|-------|
-| `services/pdf_parser.py` | BE1 | Parse PDF |
-| `services/chunker.py` | BE1 | Chunking |
-| `routers/documents.py` | BE1 | Upload + list + delete |
-| `services/embedder.py` | BE2 | Gemini embedding |
-| `services/retriever.py` | BE2 | Vector search |
-| `services/llm.py` | BE2 | Gemini generation + streaming |
-| `routers/chat.py` | BE2 | Chat endpoints |
+| `services/pdf_parser.py` | Gia Phú | Parse PDF |
+| `services/chunker.py` | Gia Phú | Chunking |
+| `routers/documents.py` | Gia Phú | Upload + list + delete |
+| `services/embedder.py` | Đức Tâm | Gemini embedding |
+| `services/retriever.py` | Đức Tâm | Vector search |
+| `services/llm.py` | Đức Tâm | Gemini generation + streaming |
+| `routers/chat.py` | Đức Tâm | Chat endpoints |
 
 ## Supabase Setup
 
