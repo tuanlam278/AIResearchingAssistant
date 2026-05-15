@@ -18,32 +18,24 @@ User Question ──► FastAPI ──► Gemini Embedding ──► Vector Sear
 
 ```
 AIResearchingAssistant/
-├── backend/          # FastAPI backend (2 người)
-├── frontend/         # React frontend (2 người)
+├── backend/          # FastAPI backend
+├── frontend/         # React frontend
 └── docs/             # Tài liệu, API contract
 ```
 
-## 👥 Phân công
-
-| Người | Role | Nhiệm vụ chính |
-|-------|------|----------------|
-| BE 1  | Backend | PDF parsing, chunking, upload flow |
-| BE 2  | Backend | Embedding, vector search, LLM generation |
-| FE 1  | Frontend | Upload UI, document list, routing |
-| FE 2  | Frontend | Chat UI, source display, streaming |
 
 ## 🚀 Tech Stack
 
-| Layer | Công cụ | Free |
-|-------|---------|------|
-| Backend | FastAPI + Python | ✅ |
-| Frontend | React + Vite | ✅ |
-| PDF Parse | pdfplumber | ✅ |
-| Embedding | Google text-embedding-004 | ✅ |
-| Vector DB | Supabase + pgvector | ✅ |
-| LLM | Gemini 1.5 Flash | ✅ |
-| Deploy BE | Render | ✅ |
-| Deploy FE | Vercel | ✅ |
+| Layer | Công cụ |
+|-------|---------|
+| Backend | FastAPI + Python |
+| Frontend | React + Vite |
+| PDF Parse | pdfplumber |
+| Embedding | Google text-embedding-004 |
+| Vector DB | Supabase + pgvector |
+| LLM | Gemini 1.5 Flash |
+| Deploy BE | Render |
+| Deploy FE | Vercel |
 
 ## 📋 Tài liệu
 
