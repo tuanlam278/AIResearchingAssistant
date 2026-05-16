@@ -20,6 +20,7 @@
 ```
 Content-Type: application/json        (với JSON request)
 Content-Type: multipart/form-data     (với file upload)
+Authorization: Bearer <access_token>  (BẮT BUỘC với mọi endpoint trừ /api/auth/*)
 ```
 
 ### Response thành công
@@ -45,6 +46,9 @@ Content-Type: multipart/form-data     (với file upload)
 
 | Code | HTTP Status | Mô tả |
 |------|------------|-------|
+| `UNAUTHORIZED` | 401 | Chưa đăng nhập hoặc token hết hạn |
+| `EMAIL_TAKEN` | 409 | Email đã được đăng ký |
+| `INVALID_CREDENTIALS` | 401 | Sai email hoặc mật khẩu |
 | `FILE_TOO_LARGE` | 413 | File vượt quá 20MB |
 | `INVALID_FILE_TYPE` | 415 | Chỉ chấp nhận PDF |
 | `PARSE_FAILED` | 422 | Không thể đọc nội dung PDF |
@@ -55,7 +59,85 @@ Content-Type: multipart/form-data     (với file upload)
 
 ---
 
-## Endpoints
+## Endpoints — Auth (không cần token)
+
+---
+
+### A1. Đăng ký
+
+**`POST /api/auth/register`**
+
+#### Request Body
+```json
+{
+  "email": "user@example.com",
+  "password": "matkhau123"
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "user_id": "uuid-v4-string",
+    "email": "user@example.com"
+  }
+}
+```
+
+> Sau khi đăng ký thành công, FE chuyển sang trang Login để user đăng nhập.
+
+---
+
+### A2. Đăng nhập
+
+**`POST /api/auth/login`**
+
+#### Request Body
+```json
+{
+  "email": "user@example.com",
+  "password": "matkhau123"
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIs...",
+    "token_type": "bearer",
+    "user": {
+      "user_id": "uuid-v4-string",
+      "email": "user@example.com"
+    }
+  }
+}
+```
+
+> FE lưu `access_token` vào React Context (không dùng localStorage). Gắn vào mọi request tiếp theo qua header `Authorization`.
+
+---
+
+### A3. Đăng xuất
+
+**`POST /api/auth/logout`** *(cần token)*
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": { "message": "Đăng xuất thành công" }
+}
+```
+
+> FE xóa token khỏi state và redirect về trang Login.
+
+---
+
+## Endpoints — Documents *(cần token)*
 
 ---
 
@@ -64,10 +146,12 @@ Content-Type: multipart/form-data     (với file upload)
 **`POST /api/documents/upload`**
 
 Upload file PDF, hệ thống sẽ tự động parse → chunk → embed → lưu vào Supabase.
+Tài liệu sẽ gắn với user đang đăng nhập — user khác không thấy được.
 
 #### Request
 ```
 Content-Type: multipart/form-data
+Authorization: Bearer <access_token>
 
 file: <PDF file, max 20MB>
 ```
@@ -87,15 +171,13 @@ file: <PDF file, max 20MB>
 }
 ```
 
-#### Notes
-- Frontend hiển thị progress bar trong lúc chờ (có thể mất 5–15 giây)
-- `status: "ready"` nghĩa là đã embed xong, có thể hỏi được
-
 ---
 
 ### 2. Lấy danh sách tài liệu
 
 **`GET /api/documents`**
+
+> Chỉ trả về tài liệu của user đang đăng nhập.
 
 #### Response `200 OK`
 ```json
@@ -122,6 +204,8 @@ file: <PDF file, max 20MB>
 
 **`DELETE /api/documents/{doc_id}`**
 
+> Chỉ xóa được tài liệu của chính mình. Xóa tài liệu của người khác trả về `DOC_NOT_FOUND`.
+
 #### Response `200 OK`
 ```json
 {
@@ -145,18 +229,11 @@ file: <PDF file, max 20MB>
   "doc_id": "uuid-v4-string",
   "question": "Transformer model hoạt động như thế nào?",
   "chat_history": [
-    {
-      "role": "user",
-      "content": "Paper này nói về cái gì?"
-    },
-    {
-      "role": "assistant",
-      "content": "Paper này giới thiệu kiến trúc Transformer..."
-    }
+    { "role": "user", "content": "Paper này nói về cái gì?" },
+    { "role": "assistant", "content": "Paper này giới thiệu kiến trúc Transformer..." }
   ]
 }
 ```
-> `chat_history` là optional, dùng để giữ context hội thoại. Gửi [] nếu không có.
 
 #### Response `200 OK`
 ```json
@@ -165,18 +242,8 @@ file: <PDF file, max 20MB>
   "data": {
     "answer": "Transformer sử dụng cơ chế Self-Attention để...",
     "sources": [
-      {
-        "chunk_id": "uuid",
-        "content": "We propose a new simple network architecture, the Transformer...",
-        "page": 2,
-        "score": 0.92
-      },
-      {
-        "chunk_id": "uuid",
-        "content": "An attention function can be described as mapping a query...",
-        "page": 3,
-        "score": 0.87
-      }
+      { "chunk_id": "uuid", "content": "We propose...", "page": 2, "score": 0.92 },
+      { "chunk_id": "uuid", "content": "An attention function...", "page": 3, "score": 0.87 }
     ],
     "tokens_used": 1240
   }
@@ -199,30 +266,22 @@ Giống endpoint `/ask` ở trên.
 Content-Type: text/event-stream
 
 data: {"type": "sources", "sources": [...]}
-
 data: {"type": "token", "content": "Transformer"}
-
-data: {"type": "token", "content": " sử"}
-
-data: {"type": "token", "content": " dụng"}
-
+data: {"type": "token", "content": " sử dụng"}
 data: {"type": "done", "tokens_used": 1240}
 ```
 
-#### Thứ tự events:
-1. `sources` — gửi trước để FE hiển thị nguồn tham khảo ngay
-2. `token` — từng token của câu trả lời
-3. `done` — kết thúc stream
-
-#### Frontend xử lý SSE:
+#### Lưu ý FE:
 ```javascript
-const eventSource = new EventSource(url);
-eventSource.onmessage = (e) => {
-  const data = JSON.parse(e.data);
-  if (data.type === 'token') appendToken(data.content);
-  if (data.type === 'sources') showSources(data.sources);
-  if (data.type === 'done') eventSource.close();
-};
+// EventSource không hỗ trợ custom header → dùng fetch() thay thế
+fetch('/api/chat/ask/stream', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`   // gắn token ở đây
+  },
+  body: JSON.stringify({ doc_id, question, chat_history })
+})
 ```
 
 ---
@@ -239,8 +298,7 @@ eventSource.onmessage = (e) => {
     "summary": "Paper này đề xuất kiến trúc Transformer...",
     "key_contributions": [
       "Cơ chế Self-Attention thay thế RNN/CNN",
-      "Multi-Head Attention cho phép học đa chiều",
-      "Positional Encoding để giữ thông tin vị trí"
+      "Multi-Head Attention cho phép học đa chiều"
     ],
     "doc_id": "uuid-v4-string"
   }
@@ -249,25 +307,30 @@ eventSource.onmessage = (e) => {
 
 ---
 
-### 7. Health check
+### 7. Health check *(không cần token)*
 
 **`GET /api/health`**
 
 ```json
-{
-  "status": "ok",
-  "version": "1.0.0"
-}
+{ "status": "ok", "version": "1.0.0" }
 ```
 
 ---
 
 ## Data Models
 
+### User
+```typescript
+interface User {
+  user_id: string;
+  email: string;
+}
+```
+
 ### Document
 ```typescript
 interface Document {
-  doc_id: string;         // UUID
+  doc_id: string;
   filename: string;
   page_count: number;
   chunk_count: number;
@@ -275,13 +338,13 @@ interface Document {
 }
 ```
 
-### Source (chunk trả về khi trả lời)
+### Source
 ```typescript
 interface Source {
   chunk_id: string;
-  content: string;        // Nội dung đoạn văn gốc
-  page: number;           // Trang trong PDF
-  score: number;          // Cosine similarity score, 0.0 – 1.0
+  content: string;
+  page: number;
+  score: number;          // Cosine similarity, 0.0 – 1.0
 }
 ```
 
@@ -299,9 +362,10 @@ interface ChatMessage {
 
 | Tham số | Giới hạn |
 |---------|----------|
+| `password` length | Tối thiểu 6 ký tự |
 | File size | 20 MB |
 | File type | PDF only |
 | `question` length | 1000 ký tự |
 | `chat_history` length | Tối đa 10 turns (20 messages) |
 | Top-k chunks retrieval | 5 chunks |
-| Max documents | 20 documents |
+| Max documents per user | 20 documents |

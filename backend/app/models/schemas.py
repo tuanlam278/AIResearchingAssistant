@@ -1,6 +1,34 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
 from datetime import datetime
+
+
+# ── Auth ──────────────────────────────────────────────────
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=6)
+
+
+class RegisterResponse(BaseModel):
+    user_id: str
+    email: str
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserInfo(BaseModel):
+    user_id: str
+    email: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserInfo
 
 
 # ── Document ──────────────────────────────────────────────
@@ -59,11 +87,6 @@ class SummaryResponse(BaseModel):
 
 
 # ── Generic wrapper ───────────────────────────────────────
-
-class SuccessResponse(BaseModel):
-    success: bool = True
-    data: dict
-
 
 class ErrorDetail(BaseModel):
     code: str

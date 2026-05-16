@@ -4,57 +4,55 @@
 
 ### Indexing Flow (khi upload PDF)
 ```
-[User] ──upload PDF──► [Frontend]
-                           │
-                     multipart/form-data
-                           │
-                       [FastAPI]
-                           │
-                    ┌──────┴──────┐
-                    │  PDF Parser │  ← pdfplumber
-                    └──────┬──────┘
-                           │ raw text + metadata (page numbers)
-                    ┌──────┴──────┐
-                    │   Chunker   │  ← RecursiveTextSplitter (chunk_size=500, overlap=50)
-                    └──────┬──────┘
-                           │ list of chunks
-                    ┌──────┴──────┐
-                    │  Embedder   │  ← Google text-embedding-004 (768 dims)
-                    └──────┬──────┘
-                           │ vectors
-                    ┌──────┴──────┐
-                    │  Supabase   │  ← pgvector, lưu content + embedding + metadata
-                    └─────────────┘
+[User đã đăng nhập] ──upload PDF──► [Frontend]
+                                          │
+                                    multipart/form-data + JWT token
+                                          │
+                                      [FastAPI]
+                                          │ verify token → lấy user_id
+                                    ┌─────┴──────┐
+                                    │ PDF Parser  │  ← pdfplumber
+                                    └─────┬──────┘
+                                          │ raw text + metadata (page numbers)
+                                    ┌─────┴──────┐
+                                    │   Chunker   │  ← RecursiveTextSplitter
+                                    └─────┬──────┘
+                                          │ list of chunks
+                                    ┌─────┴──────┐
+                                    │  Embedder   │  ← Google text-embedding-004
+                                    └─────┬──────┘
+                                          │ vectors
+                                    ┌─────┴──────┐
+                                    │  Supabase   │  ← lưu kèm user_id
+                                    └────────────┘
 ```
 
 ### Query Flow (khi user hỏi)
 ```
-[User types question]
-        │
-   [Frontend]
-        │
-   POST /api/chat/ask/stream
-        │
-   [FastAPI]
-        │
-   ┌────┴────┐
-   │ Embedder│  ← Embed câu hỏi với text-embedding-004
-   └────┬────┘
-        │ query_vector
-   ┌────┴────────────┐
-   │ Vector Search   │  ← cosine similarity trong Supabase, lấy top-5 chunks
-   └────┬────────────┘
-        │ top-k chunks + scores
-   ┌────┴──────────────┐
-   │ Prompt Builder    │  ← Ghép system prompt + chunks + chat_history + question
-   └────┬──────────────┘
-        │ full prompt
-   ┌────┴──────────┐
-   │ Gemini Flash  │  ← Stream response
-   └────┬──────────┘
-        │ SSE tokens
-   [Frontend] ← hiển thị từng token + sources
+[User hỏi] ──► [Frontend] ──► POST /api/chat/ask/stream + JWT token
+                                        │
+                                    [FastAPI] verify token → lấy user_id
+                                        │
+                                   ┌────┴────┐
+                                   │ Embedder│  ← Embed câu hỏi
+                                   └────┬────┘
+                                        │ query_vector
+                                   ┌────┴──────────────┐
+                                   │  Vector Search     │  ← filter theo user_id
+                                   └────┬──────────────┘
+                                        │ top-5 chunks
+                                   ┌────┴──────────────┐
+                                   │  Prompt Builder    │
+                                   └────┬──────────────┘
+                                        │
+                                   ┌────┴──────────┐
+                                   │  Gemini Flash  │  ← stream response
+                                   └────┬──────────┘
+                                        │ SSE tokens
+                                   [Frontend] hiển thị từng token
 ```
+
+---
 
 ## Supabase Schema
 
@@ -62,43 +60,48 @@
 -- Bật extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Bảng lưu thông tin tài liệu
+-- Bảng tài liệu — gắn với user qua user_id
 CREATE TABLE documents (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  filename TEXT NOT NULL,
-  page_count INTEGER,
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  filename    TEXT NOT NULL,
+  page_count  INTEGER,
   chunk_count INTEGER,
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Bảng lưu chunks và embeddings
+-- Bảng chunks + embeddings
 CREATE TABLE document_chunks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  doc_id UUID REFERENCES documents(id) ON DELETE CASCADE,
-  content TEXT NOT NULL,
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  doc_id      UUID REFERENCES documents(id) ON DELETE CASCADE,
+  content     TEXT NOT NULL,
   page_number INTEGER,
   chunk_index INTEGER,
-  embedding VECTOR(768),  -- text-embedding-004 = 768 dims
-  created_at TIMESTAMPTZ DEFAULT NOW()
+  embedding   VECTOR(768),   -- text-embedding-004 = 768 dims
+  created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index để tăng tốc vector search
+-- Index tăng tốc vector search
 CREATE INDEX ON document_chunks
 USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
 
--- Function để search (gọi từ Python)
+-- Row Level Security: user chỉ thấy tài liệu của mình
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user sees own documents"
+ON documents FOR ALL
+USING (auth.uid() = user_id);
+
+-- document_chunks kế thừa quyền qua foreign key, không cần RLS riêng
+
+-- Function vector search (backend gọi qua supabase.rpc)
 CREATE OR REPLACE FUNCTION match_chunks(
-  query_embedding VECTOR(768),
-  target_doc_id UUID,
-  match_count INT DEFAULT 5
+  query_embedding  VECTOR(768),
+  target_doc_id    UUID,
+  match_count      INT DEFAULT 5
 )
-RETURNS TABLE (
-  id UUID,
-  content TEXT,
-  page_number INTEGER,
-  similarity FLOAT
-)
+RETURNS TABLE (id UUID, content TEXT, page_number INTEGER, similarity FLOAT)
 LANGUAGE SQL AS $$
   SELECT id, content, page_number,
     1 - (embedding <=> query_embedding) AS similarity
@@ -109,46 +112,75 @@ LANGUAGE SQL AS $$
 $$;
 ```
 
+---
+
+## Auth Flow
+
+```
+[Register]
+FE gửi email + password
+    → BE gọi supabase.auth.sign_up()
+    → Supabase tạo user trong auth.users
+    → BE trả về user_id + email
+
+[Login]
+FE gửi email + password
+    → BE gọi supabase.auth.sign_in_with_password()
+    → Supabase trả về JWT access_token
+    → BE forward token về FE
+    → FE lưu token trong React Context
+
+[Mọi request tiếp theo]
+FE gắn header: Authorization: Bearer <token>
+    → BE verify token qua supabase.auth.get_user(token)
+    → Lấy user_id từ token để filter data
+```
+
+---
+
 ## Chunking Strategy
 
 ```
-chunk_size    = 500 tokens  (≈ 1-2 đoạn văn)
-chunk_overlap = 50 tokens   (giữ context giữa các chunk)
+chunk_size    = 500 tokens   (khoảng 1–2 đoạn văn)
+chunk_overlap = 50 tokens    (giữ context tại ranh giới chunk)
 ```
 
-Lý do: Chunk nhỏ → embedding chính xác hơn, overlap → tránh mất context ở ranh giới chunk.
+---
 
 ## Prompt Template
 
 ```
 System:
-Bạn là trợ lý nghiên cứu AI. Trả lời câu hỏi dựa trên các đoạn trích sau từ tài liệu.
+Bạn là trợ lý nghiên cứu AI, giúp người dùng hiểu tài liệu học thuật.
+Trả lời câu hỏi dựa trên các đoạn trích sau từ tài liệu.
 Nếu không tìm thấy câu trả lời trong tài liệu, hãy nói rõ điều đó.
-Trả lời ngắn gọn, chính xác, có trích dẫn trang khi cần.
+Trả lời bằng ngôn ngữ của câu hỏi (tiếng Việt hoặc tiếng Anh).
 
-Các đoạn trích liên quan:
-[CHUNK 1 - Trang 3] {content}
-[CHUNK 2 - Trang 5] {content}
+--- Đoạn trích ---
+[Trang 3] {content}
+[Trang 5] {content}
 ...
 
-Lịch sử hội thoại:
+--- Lịch sử hội thoại ---
 {chat_history}
 
-Câu hỏi: {question}
+--- Câu hỏi ---
+{question}
 ```
+
+---
 
 ## Environment Variables
 
 ### Backend (.env)
 ```
-GOOGLE_API_KEY=          # Google AI Studio
-SUPABASE_URL=            # Project URL từ Supabase dashboard
-SUPABASE_SERVICE_KEY=    # service_role key (không phải anon key)
+GOOGLE_API_KEY=           # Google AI Studio
+SUPABASE_URL=             # Project URL từ Supabase dashboard
+SUPABASE_SERVICE_KEY=     # service_role key (không phải anon key)
 CORS_ORIGINS=http://localhost:5173,https://your-app.vercel.app
 ```
 
 ### Frontend (.env)
 ```
-VITE_API_URL=http://localhost:8000   # dev
-# VITE_API_URL=https://your-app.onrender.com  # prod
+VITE_API_URL=http://localhost:8000
 ```
