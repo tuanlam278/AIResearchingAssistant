@@ -1,20 +1,19 @@
 /**
  * FE1 + FE2: Toàn bộ HTTP calls tới backend đều đi qua file này.
- * Không gọi fetch/axios trực tiếp trong components.
+ * Đã tích hợp Header Authorization (Token) và Auth APIs.
  */
 import axios from "axios";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
-const api = axios.create({
+const axiosInstance = axios.create({
   baseURL: BASE_URL,
 });
 
 function normalizeError(err) {
   if (axios.isAxiosError(err)) {
     const apiError = err.response?.data?.error;
-    const message =
-      apiError?.message || err.message || "Không thể kết nối server";
+    const message = apiError?.message || err.message || "Không thể kết nối server";
     const error = new Error(message);
     error.code = apiError?.code || "NETWORK_ERROR";
     error.status = err.response?.status;
@@ -44,45 +43,71 @@ async function unwrapRequest(requestFn) {
   }
 }
 
-export async function uploadDocument(file, onProgress) {
-  const formData = new FormData();
-  formData.append("file", file);
+// Bọc tất cả vào một object `api` để tương thích với các file UI đã viết
+export const api = {
+  // ================= AUTH API (Không cần token) =================
+  login: (email, password) => {
+    return unwrapRequest(() => axiosInstance.post("/api/auth/login", { email, password }));
+  },
 
-  return unwrapRequest(() =>
-    api.post("/api/documents/upload", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-      onUploadProgress: (e) => {
-        if (onProgress && e.total) {
-          onProgress(Math.round((e.loaded * 100) / e.total));
-        }
-      },
-    }),
-  );
-}
+  register: (email, password) => {
+    return unwrapRequest(() => axiosInstance.post("/api/auth/register", { email, password }));
+  },
 
-export async function getDocuments() {
-  return unwrapRequest(() => api.get("/api/documents"));
-}
+  logout: (token) => {
+    return unwrapRequest(() => axiosInstance.post("/api/auth/logout", {}, {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
 
-export async function deleteDocument(docId) {
-  return unwrapRequest(() => api.delete(`/api/documents/${docId}`));
-}
+  // ================= DOCUMENTS & CHAT API (Bắt buộc có token) =================
+  getDocuments: (token) => {
+    return unwrapRequest(() => axiosInstance.get("/api/documents", {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
 
-export async function summarizeDocument(docId) {
-  return unwrapRequest(() => api.post(`/api/documents/${docId}/summarize`));
-}
+  uploadDocument: (file, token, onProgress) => {
+    const formData = new FormData();
+    formData.append("file", file);
 
-export async function sendResearchQuery({ docId, question, chatHistory = [] }) {
-  return unwrapRequest(() =>
-    api.post("/api/chat/ask", {
-      doc_id: docId,
-      question,
-      chat_history: chatHistory,
-    }),
-  );
-}
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/documents/upload", formData, {
+        headers: { 
+          "Content-Type": "multipart/form-data",
+          "Authorization": `Bearer ${token}`
+        },
+        onUploadProgress: (e) => {
+          if (onProgress && e.total) {
+            onProgress(Math.round((e.loaded * 100) / e.total));
+          }
+        },
+      })
+    );
+  },
 
-// Backward compatible alias for existing usages.
-export async function askQuestion(docId, question, chatHistory = []) {
-  return sendResearchQuery({ docId, question, chatHistory });
-}
+  deleteDocument: (docId, token) => {
+    return unwrapRequest(() => axiosInstance.delete(`/api/documents/${docId}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
+
+  summarizeDocument: (docId, token) => {
+    return unwrapRequest(() => axiosInstance.post(`/api/documents/${docId}/summarize`, {}, {
+      headers: { Authorization: `Bearer ${token}` }
+    }));
+  },
+
+  sendResearchQuery: ({ docId, question, chatHistory = [] }, token) => {
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/chat/ask", {
+        doc_id: docId,
+        question,
+        chat_history: chatHistory,
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+    );
+  }
+};
+

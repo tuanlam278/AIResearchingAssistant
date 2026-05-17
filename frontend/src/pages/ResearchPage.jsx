@@ -2,10 +2,13 @@ import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import ChatBox from "../components/ChatBox";
 import SourceCard from "../components/SourceCard";
-import { sendResearchQuery } from "../services/api";
+import { api } from '../services/api';
+import { useAuth } from '../context/AuthContext'; // Bổ sung import Context
 
 export default function ResearchPage() {
   const { docId } = useParams();
+  const { token } = useAuth(); // Móc token từ hệ thống ra
+  
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sources, setSources] = useState([]);
@@ -27,11 +30,12 @@ export default function ResearchPage() {
     setLoading(true);
 
     try {
-      const response = await sendResearchQuery({
+      // Đã nhét thêm token vào làm tham số thứ 2 để Server cho phép gọi
+      const response = await api.sendResearchQuery({
         docId,
         question,
         chatHistory,
-      });
+      }, token);
 
       const answer =
         response?.answer ||
