@@ -1,108 +1,76 @@
-/**
- * FE2 implement: Component hỏi đáp chính
- * Props:
- *   docId: string
- */
-import { useState, useRef, useEffect } from 'react'
-import { askQuestionStream } from '../services/api'
-import SourceCard from './SourceCard'
+import { useEffect, useRef } from "react";
 
-export default function ChatBox({ docId }) {
-  const [messages, setMessages] = useState([])   // [{role, content, sources?}]
-  const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  const bottomRef = useRef()
+export default function ChatBox({
+  messages,
+  value,
+  onChange,
+  onSubmit,
+  loading,
+  error,
+  loadingMessage,
+  placeholder = "Đặt câu hỏi về tài liệu...",
+}) {
+  const bottomRef = useRef(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
-  // Chat history để gửi lên backend (chỉ role + content, không có sources)
-  const getChatHistory = () =>
-    messages.map(({ role, content }) => ({ role, content }))
-
-  const handleSend = () => {
-    if (!input.trim() || loading) return
-
-    const question = input.trim()
-    setInput('')
-
-    // Thêm user message
-    setMessages((prev) => [...prev, { role: 'user', content: question }])
-
-    // Placeholder cho assistant message
-    setMessages((prev) => [...prev, { role: 'assistant', content: '', sources: [] }])
-
-    setLoading(true)
-
-    askQuestionStream(docId, question, getChatHistory(), {
-      onSources: (sources) => {
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[updated.length - 1] = { ...updated[updated.length - 1], sources }
-          return updated
-        })
-      },
-      onToken: (token) => {
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: updated[updated.length - 1].content + token,
-          }
-          return updated
-        })
-      },
-      onDone: () => setLoading(false),
-      onError: (err) => {
-        setMessages((prev) => {
-          const updated = [...prev]
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: `❌ Lỗi: ${err?.message || 'Không thể kết nối server'}`,
-          }
-          return updated
-        })
-        setLoading(false)
-      },
-    })
-  }
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      onSubmit?.();
+    }
+  };
 
   return (
     <div>
-      {/* Messages */}
-      <div style={{ minHeight: 300, overflowY: 'auto' }}>
-        {messages.map((msg, i) => (
-          <div key={i}>
-            <strong>{msg.role === 'user' ? 'Bạn' : 'Trợ lý'}:</strong>
-            <p>{msg.content}{msg.role === 'assistant' && loading && i === messages.length - 1 && '▌'}</p>
-            {msg.sources?.length > 0 && (
-              <div>
-                <small>Nguồn tham khảo:</small>
-                {msg.sources.map((src) => (
-                  <SourceCard key={src.chunk_id} source={src} />
-                ))}
-              </div>
-            )}
+      <div
+        style={{
+          minHeight: 320,
+          maxHeight: 540,
+          overflowY: "auto",
+          marginBottom: 12,
+        }}
+      >
+        {messages.length === 0 && (
+          <p>Hãy nhập câu hỏi để bắt đầu nghiên cứu tài liệu.</p>
+        )}
+
+        {messages.map((msg, index) => (
+          <div key={`${msg.role}-${index}`} style={{ marginBottom: 10 }}>
+            <strong>{msg.role === "user" ? "Bạn" : "Trợ lý"}:</strong>
+            <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>
+              {msg.content}
+            </p>
           </div>
         ))}
+
+        {loading && (
+          <p style={{ marginTop: 8 }}>
+            {loadingMessage || "Đang xử lý câu trả lời..."}
+          </p>
+        )}
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {error && <p style={{ color: "red", marginBottom: 8 }}>{error}</p>}
+
       <div>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-          placeholder="Đặt câu hỏi về tài liệu..."
+        <textarea
+          value={value}
+          onChange={(e) => onChange?.(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
           disabled={loading}
-          maxLength={1000}
+          rows={3}
+          maxLength={2000}
+          style={{ width: "100%", resize: "vertical", marginBottom: 8 }}
         />
-        <button onClick={handleSend} disabled={loading || !input.trim()}>
-          {loading ? 'Đang trả lời...' : 'Gửi'}
+        <button onClick={onSubmit} disabled={loading || !value?.trim()}>
+          {loading ? "Đang gửi..." : "Gửi"}
         </button>
       </div>
     </div>
-  )
+  );
 }
