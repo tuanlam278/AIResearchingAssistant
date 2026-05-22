@@ -1,29 +1,84 @@
-"""
-Dependency dùng chung: verify JWT token và lấy user_id.
-Inject vào bất kỳ endpoint nào cần auth bằng:
+#Ver 1
+# app/dependencies.py
+"""Authentication dependency: verify Supabase JWT and inject current user.
 
-    from app.dependencies import get_current_user
-
-    @router.get("/something")
-    async def something(user=Depends(get_current_user)):
-        user_id = user["id"]
+Usage:
+    @router.get("/protected")
+    async def protected(user = Depends(get_current_user)):
+        user_id = user["user_id"]
+        email = user["email"]
 """
-from fastapi import Depends, HTTPException
+
+from typing import Dict, Optional, Any
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 from app.db.supabase_client import supabase
 
-bearer_scheme = HTTPBearer()
+# Use auto_error=False so we can control the error payload
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)):
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> Dict[str, str]:
+    """
+    Verify JWT from Authorization header using Supabase and return user info.
+
+    Raises:
+        HTTPException 401 with contract-style error when token is missing, invalid, or expired.
+
+    Returns:
+        dict: {"user_id": "<uuid>", "email": "<email>"}
+    """
+    # Missing token
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
+        )
+
     token = credentials.credentials
+
     try:
-        result = supabase.auth.get_user(token)
-        user = result.user
-        if not user:
-            raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"})
-        return {"id": str(user.id), "email": user.email}
-    except HTTPException:
-        raise
+        # supabase.auth.get_user may return different shapes depending on client version:
+        # - {'data': {'user': {...}}, 'error': None}
+        # - {'user': {...}}
+        # - object with .user attribute
+        resp: Any = supabase.auth.get_user(token)
     except Exception:
-        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"})
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
+        )
+
+    # Normalize response to find user object and possible error
+    user_obj = None
+    error_obj = None
+
+    if isinstance(resp, dict):
+        error_obj = resp.get("error")
+        data = resp.get("data") or {}
+        user_obj = data.get("user") or resp.get("user")
+    else:
+        # Some clients return an object with attributes
+        error_obj = getattr(resp, "error", None)
+        user_obj = getattr(resp, "user", None)
+
+    if error_obj or not user_obj:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
+        )
+
+    # Extract canonical fields
+    user_id = user_obj.get("id") or user_obj.get("user_id") or user_obj.get("sub")
+    email = user_obj.get("email")
+
+    if not user_id or not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
+        )
+
+    return {"user_id": str(user_id), "email": email}
