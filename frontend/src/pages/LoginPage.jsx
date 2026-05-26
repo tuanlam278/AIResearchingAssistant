@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, Navigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, Loader2 } from 'lucide-react';
@@ -11,8 +11,9 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   
   const navigate = useNavigate();
-  const { loginContext } = useAuth();
 
+  const { token, loginContext } = useAuth();
+  if (token) return <Navigate to="/" replace />;  
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
@@ -20,11 +21,13 @@ export default function LoginPage() {
 
     try {
       const response = await api.login(email, password);
-      if (response.success) {
-        // Lưu token vào bộ nhớ tạm (Context)
-        loginContext(response.data.access_token, response.data.user);
-        // Đăng nhập thành công thì đá thẳng vào Trang chủ
-        navigate('/'); 
+      
+      // Lúc này response chính là object { access_token, token_type, user }
+      if (response && response.access_token) {
+        loginContext(response.access_token, response.user);
+        
+        // Thêm lệnh navigate để đá thẳng về trang chủ cho chắc cú
+        navigate('/', { replace: true });
       }
     } catch (err) {
       setError('Sai email hoặc mật khẩu. Vui lòng thử lại!');

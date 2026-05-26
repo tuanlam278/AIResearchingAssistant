@@ -52,7 +52,7 @@ async def get_current_user(
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
         )
 
-    # Normalize response to find user object and possible error
+# Normalize response to find user object and possible error
     user_obj = None
     error_obj = None
 
@@ -71,9 +71,14 @@ async def get_current_user(
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
         )
 
-    # Extract canonical fields
-    user_id = user_obj.get("id") or user_obj.get("user_id") or user_obj.get("sub")
-    email = user_obj.get("email")
+    # --- ĐOẠN ĐÃ ĐƯỢC SỬA ---
+    # Extract canonical fields an toàn cho cả Dictionary và Object
+    if isinstance(user_obj, dict):
+        user_id = user_obj.get("id") or user_obj.get("user_id") or user_obj.get("sub")
+        email = user_obj.get("email")
+    else:
+        user_id = getattr(user_obj, "id", None) or getattr(user_obj, "user_id", None)
+        email = getattr(user_obj, "email", None)
 
     if not user_id or not email:
         raise HTTPException(

@@ -8,8 +8,9 @@ import RegisterPage from './pages/RegisterPage';
 // Component "Bảo vệ": Kiểm tra xem user có vé (token) chưa. 
 // Chưa có thì sút ra ngoài trang Login.
 const ProtectedRoute = ({ children }) => {
-  const { token } = useAuth();
-  if (!token) return <Navigate to="/login" replace />;
+  const { token, isReady } = useAuth();
+  if (!isReady && !token) return <Navigate to="/login" replace />;
+  if (isReady && !token) return <Navigate to="/login" replace />;
   return children;
 };
 

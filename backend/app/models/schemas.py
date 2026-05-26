@@ -86,7 +86,7 @@ class AskRequest(BaseModel):
     doc_id: str
     question: str = Field(..., max_length=1000)
     # Enforce max items for chat_history using conlist (fixed from previous Field(max_length=...))
-    chat_history: conlist(ChatMessage, max_items=20) = Field(default_factory=list)
+    chat_history: conlist(ChatMessage, max_length=20) = Field(default_factory=list)
 
 
 class SourceChunk(BaseModel):

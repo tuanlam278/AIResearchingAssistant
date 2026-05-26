@@ -74,7 +74,7 @@ export const api = {
     return unwrapRequest(() =>
       axiosInstance.post("/api/documents/upload", formData, {
         headers: { 
-          "Content-Type": "multipart/form-data",
+          //"Content-Type": "multipart/form-data",
           "Authorization": `Bearer ${token}`
         },
         onUploadProgress: (e) => {

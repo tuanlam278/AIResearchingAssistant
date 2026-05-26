@@ -13,11 +13,13 @@ export const AuthProvider = ({ children }) => {
   // Lưu trữ trạng thái xác thực trên RAM (biến state)
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
+  const [isReady, setIsReady] = useState(false);
 
   // Hàm được gọi khi LoginPage.jsx đăng nhập thành công
   const loginContext = (newToken, userData) => {
     setToken(newToken);
     setUser(userData);
+    setIsReady(true);
   };
 
   // Hàm được gọi khi bấm nút Đăng xuất ở HomePage.jsx hoặc khi token hết hạn (lỗi 401)
@@ -27,7 +29,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ token, user, loginContext, logoutContext }}>
+    <AuthContext.Provider value={{ token, user, isReady, loginContext, logoutContext }}>
       {children}
     </AuthContext.Provider>
   );

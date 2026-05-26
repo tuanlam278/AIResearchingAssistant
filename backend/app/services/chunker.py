@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Fixed chunking configuration
 CHUNK_SIZE = 500

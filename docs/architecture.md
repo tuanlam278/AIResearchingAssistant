@@ -93,7 +93,9 @@ CREATE POLICY "user sees own documents"
 ON documents FOR ALL
 USING (auth.uid() = user_id);
 
--- document_chunks kế thừa quyền qua foreign key, không cần RLS riêng
+-- Cấp quyền truy cập cho API Backend (Khắc phục triệt để lỗi 500 Permission Denied)
+GRANT ALL ON public.documents TO anon, authenticated, service_role;
+GRANT ALL ON public.document_chunks TO anon, authenticated, service_role;
 
 -- Function vector search (backend gọi qua supabase.rpc)
 CREATE OR REPLACE FUNCTION match_chunks(
