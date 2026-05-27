@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
+    SUPABASE_ANON_KEY: str
     CORS_ORIGINS: List[str] = ["http://localhost:5173"]
 
     # Chunking

@@ -1,22 +1,32 @@
 # app/routers/auth.py
 """Authentication routes using Supabase Auth."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Request, status
+from supabase import create_client, Client
 from app.models.schemas import RegisterRequest, LoginRequest
 from app.dependencies import get_current_user
 from app.db.supabase_client import supabase
+from app.config import settings
 
 # PREFIX khớp với api_contract.md: /api/auth/*
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
+def _anon_client() -> Client:
+    """Tạo client mới dùng anon key cho mỗi request auth.
+    Tránh lỗi session bị lưu trong singleton supabase client.
+    """
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY)
+
+
 @router.post("/register")
 async def register(payload: RegisterRequest) -> Dict[str, Any]:
+    client = _anon_client()
     try:
-        resp = supabase.auth.sign_up({"email": payload.email, "password": payload.password})
+        resp = client.auth.sign_up({"email": payload.email, "password": payload.password})
     except Exception as e:
-        print(f"LỖI ĐĂNG KÝ: {e}") 
+        print(f"LỖI ĐĂNG KÝ: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Failed to register user"},
@@ -50,9 +60,11 @@ async def register(payload: RegisterRequest) -> Dict[str, Any]:
 
 @router.post("/login")
 async def login(payload: LoginRequest) -> Dict[str, Any]:
+    client = _anon_client()
     try:
-        resp = supabase.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
-    except Exception:
+        resp = client.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
+    except Exception as e:
+        print(f"LỖI ĐĂNG NHẬP: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Authentication service error"},
@@ -61,10 +73,15 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
     error = getattr(resp, "error", None) or (resp.get("error") if isinstance(resp, dict) else None)
     if error:
         message = getattr(error, "message", str(error))
-        if any(w in message.lower() for w in ["invalid", "wrong", "credentials", "email not confirmed"]):
+        if "email not confirmed" in message.lower():
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"code": "INVALID_CREDENTIALS", "message": "Sai email hoặc mật khẩu"},
+                detail={"code": "EMAIL_NOT_CONFIRMED", "message": "Email chưa được xác nhận. Vui lòng kiểm tra hộp thư."},
+            )
+        if any(w in message.lower() for w in ["invalid", "wrong", "credentials"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "INVALID_CREDENTIALS", "message": "Sai email hoặc mật khẩu. Vui lòng thử lại!"},
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -101,7 +118,6 @@ async def logout(request: Request) -> Dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": "UNAUTHORIZED", "message": "Missing authorization token"},
         )
-    token = authorization.split(" ", 1)[1].strip()
 
     try:
         supabase.auth.sign_out()

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.dependencies import get_current_user
 from app.services.pdf_parser import parse_pdf
 from app.services.chunker import chunk_text
+from app.services.embedder import embed_chunks
 from app.db.supabase_client import supabase
 from app.config import settings
 
@@ -14,16 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 def _supabase_response_data(resp: Any) -> tuple[Any, Any]:
-    """Extract data and error from Supabase responses.
-
-    Supabase clients may return either an object with attributes or a dict-like response.
-    """
     if isinstance(resp, dict):
         return resp.get("data"), resp.get("error")
     return getattr(resp, "data", None), getattr(resp, "error", None)
 
 
-# Router has no prefix because main.py mounts it with /api/documents
 router = APIRouter(tags=["documents"])
 
 # ---------------------------
@@ -78,7 +74,7 @@ class DeleteDocumentResponse(BaseModel):
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_document(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    """Upload a PDF document, parse it, chunk it, and store metadata in Supabase."""
+    """Upload a PDF document, parse it, chunk it, embed and store in Supabase."""
 
     if file.content_type != "application/pdf":
         raise HTTPException(
@@ -103,8 +99,7 @@ async def upload_document(file: UploadFile = File(...), user: dict = Depends(get
         )
 
     try:
-        # parse_pdf returns List[Dict[str, Any]] with keys: page_number, content
-        pages: List[Dict[str, Any]] = parse_pdf(contents)
+        pages: List[Dict[str, Any]] = await parse_pdf(contents)
         page_count = len(pages)
     except Exception:
         logger.exception("PDF parsing failed")
@@ -114,7 +109,6 @@ async def upload_document(file: UploadFile = File(...), user: dict = Depends(get
         )
 
     try:
-        # chunk_text expects List[Dict[str, Any]] as returned by parse_pdf
         chunks = chunk_text(pages)
         chunk_count = len(chunks)
     except Exception:
@@ -131,6 +125,7 @@ async def upload_document(file: UploadFile = File(...), user: dict = Depends(get
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ"},
         )
 
+    # --- Bước 1: Insert document metadata ---
     try:
         insert_payload = {
             "user_id": user_id,
@@ -138,12 +133,9 @@ async def upload_document(file: UploadFile = File(...), user: dict = Depends(get
             "page_count": page_count,
             "chunk_count": chunk_count,
         }
-        resp = supabase.table("documents").insert(insert_payload).select(
-            "id, filename, page_count, chunk_count, created_at"
-        ).execute()
+        resp = supabase.table("documents").insert(insert_payload).execute()
     except Exception as exc:
         logger.exception("Supabase insert operation raised an exception")
-        logger.error("Supabase insert exception details: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Lỗi server khi lưu tài liệu"},
@@ -152,7 +144,6 @@ async def upload_document(file: UploadFile = File(...), user: dict = Depends(get
     data, error = _supabase_response_data(resp)
     if error:
         logger.error("Supabase insert returned error: %s", getattr(error, "message", repr(error)))
-        logger.debug("Supabase insert error details: %s", getattr(error, "details", repr(error)))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Lỗi server khi lưu tài liệu"},
@@ -166,12 +157,46 @@ async def upload_document(file: UploadFile = File(...), user: dict = Depends(get
         )
 
     created = data[0]
+    doc_id = created["id"]
 
-    # NOTE: status is hardcoded to "ready" because parsing/chunking is synchronous here.
-    # If this process is moved to a background worker, map status to a DB column and return actual state.
+    # --- Bước 2: Embed toàn bộ chunks ---
+    try:
+        texts = [c["content"] for c in chunks]
+        embeddings = await embed_chunks(texts)
+    except Exception:
+        logger.exception("Embedding chunks failed")
+        # Rollback: xóa document vừa insert để tránh orphan record
+        supabase.table("documents").delete().eq("id", doc_id).execute()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "EMBED_FAILED", "message": "Lỗi khi tạo embedding cho tài liệu"},
+        )
+
+    # --- Bước 3: Insert chunks + embeddings vào document_chunks ---
+    try:
+        chunk_rows = [
+            {
+                "doc_id": doc_id,
+                "content": chunks[i]["content"],
+                "page_number": chunks[i]["page_number"],
+                "chunk_index": i,
+                "embedding": "[" + ",".join(map(str, embeddings[i])) + "]",
+            }
+            for i in range(len(chunks))
+        ]
+        supabase.table("document_chunks").insert(chunk_rows).execute()
+    except Exception:
+        logger.exception("Inserting document_chunks failed")
+        # Rollback: xóa document (chunks sẽ cascade delete theo foreign key)
+        supabase.table("documents").delete().eq("id", doc_id).execute()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi lưu chunks vào database"},
+        )
+
     return UploadResponse(
         data=UploadResponseData(
-            doc_id=created["id"],
+            doc_id=doc_id,
             filename=created["filename"],
             chunk_count=created["chunk_count"],
             page_count=created["page_count"],
@@ -196,7 +221,6 @@ async def list_documents(user: dict = Depends(get_current_user)):
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
     except Exception as exc:
         logger.exception("Supabase select operation raised an exception")
-        logger.error("Supabase select exception details: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi truy vấn danh sách tài liệu"},
@@ -205,7 +229,6 @@ async def list_documents(user: dict = Depends(get_current_user)):
     data, error = _supabase_response_data(resp)
     if error:
         logger.error("Supabase select returned error: %s", getattr(error, "message", repr(error)))
-        logger.debug("Supabase select error details: %s", getattr(error, "details", repr(error)))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi truy vấn danh sách tài liệu"},
@@ -241,7 +264,6 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
         resp = supabase.table("documents").delete().match({"id": doc_id, "user_id": user_id}).execute()
     except Exception as exc:
         logger.exception("Supabase delete operation raised an exception")
-        logger.error("Supabase delete exception details: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi xóa tài liệu"},
@@ -250,7 +272,6 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
     data, error = _supabase_response_data(resp)
     if error:
         logger.error("Supabase delete returned error: %s", getattr(error, "message", repr(error)))
-        logger.debug("Supabase delete error details: %s", getattr(error, "details", repr(error)))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi xóa tài liệu"},
@@ -267,12 +288,7 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
 
 @router.post("/{doc_id}/summarize")
 async def summarize_document(doc_id: str, user: dict = Depends(get_current_user)):
-    """
-    Stub for document summarization endpoint.
-
-    TODO: Team BE2 - Implement document summarization using Gemini LLM here.
-    Keep this stub to satisfy the API Contract until implementation is complete.
-    """
+    """Stub for document summarization endpoint."""
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail={"code": "NOT_IMPLEMENTED", "message": "Tóm tắt tài liệu chưa được hỗ trợ"},

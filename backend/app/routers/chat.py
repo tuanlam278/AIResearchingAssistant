@@ -9,7 +9,6 @@ import json
 
 router = APIRouter()
 
-
 def _make_error(code: str, message: str) -> dict:
     return {"code": code, "message": message}
 
@@ -23,6 +22,7 @@ async def ask(
     try:
         query_vector = await embed_query(request.question)
     except Exception as e:
+        print(f"[EMBED ERROR] {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=500,
             detail=_make_error("EMBED_FAILED", "Lỗi khi tạo embedding cho câu hỏi"),
@@ -40,6 +40,7 @@ async def ask(
     try:
         answer = await generate_answer(request.question, chunks, request.chat_history)
     except Exception as e:
+        print(f"[LLM ERROR] {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=500,
             detail=_make_error("LLM_FAILED", "Lỗi khi gọi Gemini"),
@@ -64,7 +65,6 @@ async def ask(
         },
     }
 
-
 @router.post("/ask/stream")
 async def ask_stream(
     request: AskRequest,
@@ -73,7 +73,8 @@ async def ask_stream(
     # 1. Embed câu hỏi
     try:
         query_vector = await embed_query(request.question)
-    except Exception:
+    except Exception as e:
+        print(f"[EMBED ERROR] {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=500,
             detail=_make_error("EMBED_FAILED", "Lỗi khi tạo embedding"),
@@ -111,7 +112,7 @@ async def ask_stream(
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception:
-            # Gửi lỗi qua SSE thay vì để stream die âm thầm
+            print(f"[STREAM ERROR] {type(e).__name__}: {e}")
             yield f"data: {json.dumps({'type': 'error', 'code': 'LLM_FAILED', 'message': 'Lỗi khi gọi Gemini'})}\n\n"
 
     return StreamingResponse(
