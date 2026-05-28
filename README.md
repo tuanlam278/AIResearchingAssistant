@@ -1,6 +1,6 @@
 # 🔬 AI Research Assistant
 
-Hệ thống hỗ trợ đọc và phân tích tài liệu học thuật sử dụng RAG (Retrieval-Augmented Generation).
+Hệ thống hỗ trợ đọc và phân tích tài liệu học thuật sử dụng RAG (Retrieval-Augmented Generation), tổ chức tài liệu theo **Notebooks**.
 
 ## 🏗️ Kiến trúc hệ thống
 
@@ -11,7 +11,7 @@ User Question ──► FastAPI ──► Gemini Embedding ──► Vector Sear
                                                          │
                                               Top-k Chunks + Prompt
                                                          │
-                                                  Gemini Flash ──► Answer + Sources
+                                               Gemini 2.5 Flash ──► Answer + Sources
 ```
 
 ## 📁 Cấu trúc dự án
@@ -19,30 +19,30 @@ User Question ──► FastAPI ──► Gemini Embedding ──► Vector Sear
 ```
 AIResearchingAssistant/
 ├── backend/          # FastAPI backend
-├── frontend/         # React frontend
-└── docs/             # Tài liệu, API contract
+├── frontend/         # React + Vite frontend
+├── README.md
+├── api_contract.md
+└── architecture.md
 ```
-
 
 ## 🚀 Tech Stack
 
 | Layer | Công cụ |
 |-------|---------|
 | Backend | FastAPI + Python |
-| Frontend | React + Vite |
-| PDF Parse | pdfplumber |
-| Embedding | Google text-embedding-004 |
+| Frontend | React + Vite + Tailwind CSS |
+| PDF Parse | pdfplumber + PyMuPDF |
+| Chunking | LangChain RecursiveCharacterTextSplitter + tiktoken |
+| Embedding | Google `text-embedding-004` (768 dims) |
 | Vector DB | Supabase + pgvector |
-| LLM | Gemini 1.5 Flash |
+| LLM | Gemini 2.5 Flash |
 | Deploy BE | Render |
 | Deploy FE | Vercel |
 
 ## 📋 Tài liệu
 
-- [API Contract](./docs/api_contract.md)
-- [Architecture](./docs/architecture.md)
-- [Backend README](./backend/README.md)
-- [Frontend README](./frontend/README.md)
+- [API Contract](./api_contract.md)
+- [Architecture](./architecture.md)
 
 ## ⚙️ Setup nhanh
 
@@ -59,3 +59,11 @@ cp .env.example .env   # Điền VITE_API_URL
 npm install
 npm run dev
 ```
+
+## 🗺️ Luồng sử dụng chính
+
+1. Đăng ký / Đăng nhập
+2. Tạo **Notebook** (nhóm tài liệu theo chủ đề)
+3. Upload **nhiều PDF** vào notebook
+4. Đặt câu hỏi — hệ thống tìm kiếm trên **toàn bộ tài liệu trong notebook**
+5. Nhận câu trả lời kèm nguồn trích dẫn (có thể streaming)

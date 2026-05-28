@@ -9,11 +9,16 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 logger = logging.getLogger(__name__)
 
 # Chunking configuration
-CHUNK_SIZE = 500      # token (khớp với architecture.md)
-CHUNK_OVERLAP = 50    # token
+CHUNK_SIZE = 500        # token (~1–2 đoạn văn học thuật)
+CHUNK_OVERLAP = 50      # token (giữ context tại ranh giới chunk)
 
-# cl100k_base là tokenizer của GPT-4 / text-embedding-ada — phổ biến,
-# bám sát số token thực tế hơn so với đếm ký tự
+# Chunk ngắn hơn ngưỡng này thường là header, page number, caption lẻ...
+# → nhiễu khi vector search, bỏ qua luôn
+MIN_CHUNK_TOKENS = 30
+
+# cl100k_base là tokenizer của GPT-4 — phổ biến, bám sát số token thực tế
+# hơn đếm ký tự. Gemini dùng tokenizer riêng nên có thể lệch ~5-10%,
+# nhưng không ảnh hưởng đáng kể đến chất lượng chunking.
 _tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
@@ -27,8 +32,9 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     Chia các trang PDF đã parse thành các chunk theo token.
 
     Chunking strategy:
-    - chunk_size    = 500 tokens  (~1–2 đoạn văn học thuật)
-    - chunk_overlap = 50  tokens  (giữ context tại ranh giới chunk)
+    - chunk_size     = 500 tokens  (~1–2 đoạn văn học thuật)
+    - chunk_overlap  = 50  tokens  (giữ context tại ranh giới chunk)
+    - min_chunk_size = 30  tokens  (bỏ chunk quá ngắn: header, page number...)
     - length_function đếm token thật sự, không đếm ký tự
 
     Input format:
@@ -46,7 +52,7 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     Notes:
     - chunk_index là global xuyên suốt toàn bộ tài liệu
     - page_number được giữ nguyên cho mỗi chunk
-    - Trang rỗng và chunk chỉ có whitespace bị bỏ qua
+    - Trang rỗng, chunk chỉ có whitespace, và chunk < MIN_CHUNK_TOKENS bị bỏ qua
 
     Args:
         pages: Danh sách trang đã parse từ pdf_parser.
@@ -61,13 +67,14 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
-        length_function=_count_tokens,   # ← đếm token, không đếm ký tự
+        length_function=_count_tokens,
         separators=["\n\n", "\n", " ", ""],
     )
 
     chunks: List[Dict[str, Any]] = []
     chunk_index = 0
     skipped_pages = 0
+    skipped_short = 0
 
     for page in pages:
         page_number = int(page.get("page_number", 0))
@@ -84,6 +91,11 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if not cleaned:
                 continue
 
+            # Bỏ qua chunk quá ngắn — thường là header, số trang, caption lẻ
+            if _count_tokens(cleaned) < MIN_CHUNK_TOKENS:
+                skipped_short += 1
+                continue
+
             chunks.append(
                 {
                     "chunk_index": chunk_index,
@@ -95,7 +107,7 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     logger.info(
         f"Chunking hoàn tất: {len(chunks)} chunks từ {len(pages) - skipped_pages} trang "
-        f"({skipped_pages} trang rỗng bị bỏ qua)."
+        f"({skipped_pages} trang rỗng, {skipped_short} chunk ngắn bị bỏ qua)."
     )
 
     return chunks

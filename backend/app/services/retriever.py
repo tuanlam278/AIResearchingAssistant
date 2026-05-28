@@ -9,25 +9,23 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-# Chunk có similarity thấp hơn ngưỡng này sẽ bị loại —
-# tránh nhét context không liên quan vào prompt
 MIN_SIMILARITY = getattr(settings, "MIN_SIMILARITY", 0.5)
 
 
-async def retrieve_chunks(query_vector: List[float], doc_id: str) -> List[dict]:
+async def retrieve_chunks(query_vector: List[float], notebook_id: str) -> List[dict]:
     """
     Tìm top-k chunks liên quan nhất với câu hỏi bằng cosine similarity.
 
-    - Chỉ tìm trong tài liệu có doc_id tương ứng
+    - Tìm trên toàn bộ documents trong notebook (không giới hạn 1 file)
     - Lọc bỏ chunk có similarity < MIN_SIMILARITY
     - Kết quả sắp xếp từ liên quan nhất đến ít nhất
 
     Args:
         query_vector: Embedding vector của câu hỏi (768 chiều).
-        doc_id:       UUID của tài liệu cần tìm kiếm.
+        notebook_id:  UUID của notebook cần tìm kiếm.
 
     Returns:
-        [{"id": str, "content": str, "page_number": int, "similarity": float}, ...]
+        [{"id": str, "content": str, "page_number": int, "doc_id": str, "similarity": float}, ...]
         Trả về list rỗng nếu không tìm thấy chunk nào vượt ngưỡng.
 
     Raises:
@@ -35,11 +33,10 @@ async def retrieve_chunks(query_vector: List[float], doc_id: str) -> List[dict]:
     """
     if not query_vector:
         raise ValueError("query_vector không được rỗng.")
-    if not doc_id:
-        raise ValueError("doc_id không được rỗng.")
+    if not notebook_id:
+        raise ValueError("notebook_id không được rỗng.")
 
     def _call() -> List[dict]:
-        # Convert list → string "[0.1, 0.2, ...]" để pgvector parse đúng
         vector_str = "[" + ",".join(map(str, query_vector)) + "]"
 
         try:
@@ -47,7 +44,7 @@ async def retrieve_chunks(query_vector: List[float], doc_id: str) -> List[dict]:
                 "match_chunks",
                 {
                     "query_embedding": vector_str,
-                    "target_doc_id": doc_id,
+                    "target_notebook_id": notebook_id,   # ← đổi từ target_doc_id
                     "match_count": settings.TOP_K_CHUNKS,
                 },
             ).execute()
@@ -57,18 +54,17 @@ async def retrieve_chunks(query_vector: List[float], doc_id: str) -> List[dict]:
 
         raw_chunks = result.data or []
 
-        # Lọc chunk dưới ngưỡng similarity
         filtered = [c for c in raw_chunks if c.get("similarity", 0) >= MIN_SIMILARITY]
 
         if not filtered:
             logger.warning(
                 f"Không có chunk nào vượt ngưỡng similarity {MIN_SIMILARITY} "
-                f"(doc_id={doc_id}, tổng trả về={len(raw_chunks)})."
+                f"(notebook_id={notebook_id}, tổng trả về={len(raw_chunks)})."
             )
         else:
             logger.info(
                 f"Retrieval: {len(filtered)}/{len(raw_chunks)} chunks vượt ngưỡng "
-                f"similarity {MIN_SIMILARITY} (doc_id={doc_id})."
+                f"similarity {MIN_SIMILARITY} (notebook_id={notebook_id})."
             )
 
         return filtered

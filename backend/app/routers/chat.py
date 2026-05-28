@@ -9,6 +9,7 @@ import json
 
 router = APIRouter()
 
+
 def _make_error(code: str, message: str) -> dict:
     return {"code": code, "message": message}
 
@@ -16,7 +17,7 @@ def _make_error(code: str, message: str) -> dict:
 @router.post("/ask", response_model=dict)
 async def ask(
     request: AskRequest,
-    current_user: dict = Depends(get_current_user),  # ← JWT auth bắt buộc
+    current_user: dict = Depends(get_current_user),
 ):
     # 1. Embed câu hỏi
     try:
@@ -28,12 +29,12 @@ async def ask(
             detail=_make_error("EMBED_FAILED", "Lỗi khi tạo embedding cho câu hỏi"),
         )
 
-    # 2. Vector search — kiểm tra doc thuộc về user hiện tại
-    chunks = await retrieve_chunks(query_vector, request.doc_id)
+    # 2. Vector search theo notebook_id (tìm trên tất cả file trong notebook)
+    chunks = await retrieve_chunks(query_vector, request.notebook_id)   # ← đổi
     if not chunks:
         raise HTTPException(
             status_code=404,
-            detail=_make_error("DOC_NOT_FOUND", "Không tìm thấy tài liệu hoặc tài liệu chưa có dữ liệu"),
+            detail=_make_error("DOC_NOT_FOUND", "Không tìm thấy tài liệu hoặc notebook chưa có dữ liệu"),
         )
 
     # 3. Generate answer
@@ -65,10 +66,11 @@ async def ask(
         },
     }
 
+
 @router.post("/ask/stream")
 async def ask_stream(
     request: AskRequest,
-    current_user: dict = Depends(get_current_user),  # ← JWT auth bắt buộc
+    current_user: dict = Depends(get_current_user),
 ):
     # 1. Embed câu hỏi
     try:
@@ -80,12 +82,12 @@ async def ask_stream(
             detail=_make_error("EMBED_FAILED", "Lỗi khi tạo embedding"),
         )
 
-    # 2. Vector search
-    chunks = await retrieve_chunks(query_vector, request.doc_id)
+    # 2. Vector search theo notebook_id
+    chunks = await retrieve_chunks(query_vector, request.notebook_id)   # ← đổi
     if not chunks:
         raise HTTPException(
             status_code=404,
-            detail=_make_error("DOC_NOT_FOUND", "Không tìm thấy tài liệu"),
+            detail=_make_error("DOC_NOT_FOUND", "Không tìm thấy tài liệu trong notebook"),
         )
 
     sources = [
@@ -100,10 +102,8 @@ async def ask_stream(
 
     async def event_generator():
         try:
-            # Gửi sources trước để FE hiển thị ngay
             yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
 
-            # Stream từng token
             async for token in generate_answer_stream(
                 request.question, chunks, request.chat_history
             ):
@@ -111,7 +111,7 @@ async def ask_stream(
 
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-        except Exception:
+        except Exception as e:
             print(f"[STREAM ERROR] {type(e).__name__}: {e}")
             yield f"data: {json.dumps({'type': 'error', 'code': 'LLM_FAILED', 'message': 'Lỗi khi gọi Gemini'})}\n\n"
 
@@ -120,6 +120,6 @@ async def ask_stream(
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # quan trọng nếu deploy sau Nginx
+            "X-Accel-Buffering": "no",
         },
     )

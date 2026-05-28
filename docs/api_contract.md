@@ -48,13 +48,15 @@ Authorization: Bearer <access_token>  (BẮT BUỘC với mọi endpoint trừ /
 |------|------------|-------|
 | `UNAUTHORIZED` | 401 | Chưa đăng nhập hoặc token hết hạn |
 | `EMAIL_TAKEN` | 409 | Email đã được đăng ký |
+| `EMAIL_NOT_CONFIRMED` | 401 | Email chưa được xác nhận qua Supabase |
 | `INVALID_CREDENTIALS` | 401 | Sai email hoặc mật khẩu |
 | `FILE_TOO_LARGE` | 413 | File vượt quá 20MB |
 | `INVALID_FILE_TYPE` | 415 | Chỉ chấp nhận PDF |
 | `PARSE_FAILED` | 422 | Không thể đọc nội dung PDF |
-| `DOC_NOT_FOUND` | 404 | Không tìm thấy tài liệu |
+| `DOC_NOT_FOUND` | 404 | Không tìm thấy tài liệu hoặc notebook |
 | `EMBED_FAILED` | 500 | Lỗi khi gọi Gemini Embedding |
 | `LLM_FAILED` | 500 | Lỗi khi gọi Gemini Flash |
+| `NOT_IMPLEMENTED` | 501 | Tính năng chưa được hỗ trợ |
 | `INTERNAL_ERROR` | 500 | Lỗi server không xác định |
 
 ---
@@ -137,23 +139,21 @@ Authorization: Bearer <access_token>  (BẮT BUỘC với mọi endpoint trừ /
 
 ---
 
-## Endpoints — Documents *(cần token)*
+## Endpoints — Notebooks *(cần token)*
+
+Notebooks là đơn vị tổ chức tài liệu. Mỗi notebook chứa nhiều PDF. Câu hỏi được trả lời dựa trên toàn bộ tài liệu trong notebook.
 
 ---
 
-### 1. Upload tài liệu
+### N1. Tạo notebook
 
-**`POST /api/documents/upload`**
+**`POST /api/notebooks`**
 
-Upload file PDF, hệ thống sẽ tự động parse → chunk → embed → lưu vào Supabase.
-Tài liệu sẽ gắn với user đang đăng nhập — user khác không thấy được.
-
-#### Request
-```
-Content-Type: multipart/form-data
-Authorization: Bearer <access_token>
-
-file: <PDF file, max 20MB>
+#### Request Body
+```json
+{
+  "name": "Transformer Papers"
+}
 ```
 
 #### Response `200 OK`
@@ -161,23 +161,113 @@ file: <PDF file, max 20MB>
 {
   "success": true,
   "data": {
-    "doc_id": "uuid-v4-string",
-    "filename": "attention_is_all_you_need.pdf",
-    "chunk_count": 42,
-    "page_count": 15,
-    "created_at": "2024-01-15T10:30:00Z",
-    "status": "ready"
+    "notebook_id": "uuid-v4-string",
+    "name": "Transformer Papers",
+    "created_at": "2024-01-15T10:30:00Z"
   }
 }
 ```
 
 ---
 
-### 2. Lấy danh sách tài liệu
+### N2. Lấy danh sách notebooks
 
-**`GET /api/documents`**
+**`GET /api/notebooks`**
 
-> Chỉ trả về tài liệu của user đang đăng nhập.
+> Chỉ trả về notebooks của user đang đăng nhập, sắp xếp mới nhất trước.
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "notebooks": [
+      {
+        "notebook_id": "uuid-v4-string",
+        "name": "Transformer Papers",
+        "created_at": "2024-01-15T10:30:00Z"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+---
+
+### N3. Xóa notebook
+
+**`DELETE /api/notebooks/{notebook_id}`**
+
+> Cascade xóa toàn bộ documents và chunks bên trong. Chỉ xóa được notebook của chính mình.
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "notebook_id": "uuid-v4-string",
+    "deleted": true
+  }
+}
+```
+
+---
+
+### N4. Upload tài liệu vào notebook
+
+**`POST /api/notebooks/{notebook_id}/upload`**
+
+Upload **nhiều file PDF** cùng lúc. Mỗi file được parse → chunk → embed → lưu vào Supabase độc lập.
+
+#### Request
+```
+Content-Type: multipart/form-data
+Authorization: Bearer <access_token>
+
+files: <PDF file 1, max 20MB>
+files: <PDF file 2, max 20MB>
+...
+```
+
+> Field name là `files` (số nhiều), hỗ trợ nhiều file trong một request.
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "uploaded": [
+      {
+        "filename": "attention_is_all_you_need.pdf",
+        "doc_id": "uuid-v4-string",
+        "page_count": 15,
+        "chunk_count": 42,
+        "created_at": "2024-01-15T10:30:00Z",
+        "status": "ready"
+      }
+    ],
+    "failed": [
+      {
+        "filename": "corrupted.pdf",
+        "status": "error",
+        "error": "PARSE_FAILED"
+      }
+    ],
+    "total": 2
+  }
+}
+```
+
+> Upload từng phần thất bại không làm hỏng cả batch — các file thành công vẫn được lưu.
+
+---
+
+### N5. Lấy danh sách tài liệu trong notebook
+
+**`GET /api/notebooks/{notebook_id}/documents`**
+
+> Trả về tài liệu sắp xếp theo thứ tự upload (cũ nhất trước).
 
 #### Response `200 OK`
 ```json
@@ -200,11 +290,15 @@ file: <PDF file, max 20MB>
 
 ---
 
-### 3. Xóa tài liệu
+## Endpoints — Documents *(cần token)*
+
+---
+
+### D1. Xóa tài liệu
 
 **`DELETE /api/documents/{doc_id}`**
 
-> Chỉ xóa được tài liệu của chính mình. Xóa tài liệu của người khác trả về `DOC_NOT_FOUND`.
+> Xóa một file cụ thể trong notebook. Cascade xóa các chunks liên quan.
 
 #### Response `200 OK`
 ```json
@@ -219,14 +313,28 @@ file: <PDF file, max 20MB>
 
 ---
 
-### 4. Hỏi đáp (non-streaming)
+### D2. Tóm tắt tài liệu *(chưa hỗ trợ)*
+
+**`POST /api/documents/{doc_id}/summarize`**
+
+> **Trạng thái:** Chưa được implement — endpoint trả về `501 NOT_IMPLEMENTED`.
+
+---
+
+## Endpoints — Chat *(cần token)*
+
+---
+
+### C1. Hỏi đáp (non-streaming)
 
 **`POST /api/chat/ask`**
+
+> Tìm kiếm trên **toàn bộ tài liệu trong notebook** (không giới hạn 1 file).
 
 #### Request Body
 ```json
 {
-  "doc_id": "uuid-v4-string",
+  "notebook_id": "uuid-v4-string",
   "question": "Transformer model hoạt động như thế nào?",
   "chat_history": [
     { "role": "user", "content": "Paper này nói về cái gì?" },
@@ -252,14 +360,14 @@ file: <PDF file, max 20MB>
 
 ---
 
-### 5. Hỏi đáp (streaming — recommended)
+### C2. Hỏi đáp (streaming — recommended)
 
 **`POST /api/chat/ask/stream`**
 
 Trả về Server-Sent Events (SSE) để hiển thị từng token như ChatGPT.
 
 #### Request Body
-Giống endpoint `/ask` ở trên.
+Giống endpoint `/ask` ở trên (dùng `notebook_id`).
 
 #### Response — SSE stream
 ```
@@ -268,8 +376,11 @@ Content-Type: text/event-stream
 data: {"type": "sources", "sources": [...]}
 data: {"type": "token", "content": "Transformer"}
 data: {"type": "token", "content": " sử dụng"}
-data: {"type": "done", "tokens_used": 1240}
+data: {"type": "done"}
+data: {"type": "error", "code": "LLM_FAILED", "message": "..."}
 ```
+
+> Nếu xảy ra lỗi trong quá trình stream, BE gửi event `type: "error"` rồi kết thúc stream (không throw HTTP error).
 
 #### Lưu ý FE:
 ```javascript
@@ -278,41 +389,20 @@ fetch('/api/chat/ask/stream', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`   // gắn token ở đây
+    'Authorization': `Bearer ${token}`
   },
-  body: JSON.stringify({ doc_id, question, chat_history })
+  body: JSON.stringify({ notebook_id, question, chat_history })
 })
 ```
 
 ---
 
-### 6. Tóm tắt tài liệu
-
-**`POST /api/documents/{doc_id}/summarize`**
-
-#### Response `200 OK`
-```json
-{
-  "success": true,
-  "data": {
-    "summary": "Paper này đề xuất kiến trúc Transformer...",
-    "key_contributions": [
-      "Cơ chế Self-Attention thay thế RNN/CNN",
-      "Multi-Head Attention cho phép học đa chiều"
-    ],
-    "doc_id": "uuid-v4-string"
-  }
-}
-```
-
----
-
-### 7. Health check *(không cần token)*
+### H1. Health check *(không cần token)*
 
 **`GET /api/health`**
 
 ```json
-{ "status": "ok", "version": "1.0.0" }
+{ "status": "ok", "version": "2.0.0" }
 ```
 
 ---
@@ -327,6 +417,15 @@ interface User {
 }
 ```
 
+### Notebook
+```typescript
+interface Notebook {
+  notebook_id: string;
+  name: string;
+  created_at: string;   // ISO 8601
+}
+```
+
 ### Document
 ```typescript
 interface Document {
@@ -334,7 +433,7 @@ interface Document {
   filename: string;
   page_count: number;
   chunk_count: number;
-  created_at: string;     // ISO 8601
+  created_at: string;   // ISO 8601
 }
 ```
 
@@ -344,7 +443,7 @@ interface Source {
   chunk_id: string;
   content: string;
   page: number;
-  score: number;          // Cosine similarity, 0.0 – 1.0
+  score: number;        // Cosine similarity, 0.0 – 1.0
 }
 ```
 
@@ -363,9 +462,10 @@ interface ChatMessage {
 | Tham số | Giới hạn |
 |---------|----------|
 | `password` length | Tối thiểu 6 ký tự |
+| `notebook name` length | 1 – 200 ký tự |
 | File size | 20 MB |
 | File type | PDF only |
 | `question` length | 1000 ký tự |
-| `chat_history` length | Tối đa 10 turns (20 messages) |
+| `chat_history` length | Tối đa 20 messages (10 turns) |
 | Top-k chunks retrieval | 5 chunks |
-| Max documents per user | 20 documents |
+| Min similarity threshold | 0.5 (cosine) |
