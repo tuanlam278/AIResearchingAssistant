@@ -66,70 +66,108 @@ Mỗi file xử lý độc lập — file lỗi không ảnh hưởng file khác
 ## Supabase Schema
 
 ```sql
--- Bật extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Bảng notebooks — gắn với user
+-- BẢNG NOTEBOOKS
 CREATE TABLE notebooks (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id     UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  name        TEXT NOT NULL,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Bảng tài liệu — gắn với notebook
-CREATE TABLE documents (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  notebook_id UUID REFERENCES notebooks(id) ON DELETE CASCADE,
-  filename    TEXT NOT NULL,
-  page_count  INTEGER,
-  chunk_count INTEGER,
-  created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Bảng chunks + embeddings — gắn với doc và notebook
-CREATE TABLE document_chunks (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  doc_id      UUID REFERENCES documents(id) ON DELETE CASCADE,
-  notebook_id UUID REFERENCES notebooks(id) ON DELETE CASCADE,  -- index nhanh
-  content     TEXT NOT NULL,
-  page_number INTEGER,
-  chunk_index INTEGER,
-  embedding   VECTOR(768),   -- gemini-embedding-001 = 768 dims
-  created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Index tăng tốc vector search
-CREATE INDEX ON document_chunks
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists = 100);
-
--- Row Level Security
 ALTER TABLE notebooks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "user sees own notebooks"
 ON notebooks FOR ALL
 USING (auth.uid() = user_id);
 
--- Cấp quyền truy cập cho API Backend
 GRANT ALL ON public.notebooks TO anon, authenticated, service_role;
+
+-- BẢNG DOCUMENTS
+
+CREATE TABLE documents (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  notebook_id   UUID REFERENCES notebooks(id) ON DELETE CASCADE,
+  filename      TEXT NOT NULL,
+  page_count    INTEGER,
+  chunk_count   INTEGER,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user sees own documents"
+ON documents FOR ALL
+USING (
+  EXISTS (
+    SELECT 1 FROM notebooks
+    WHERE notebooks.id = documents.notebook_id
+    AND notebooks.user_id = auth.uid()
+  )
+);
+
 GRANT ALL ON public.documents TO anon, authenticated, service_role;
+
+-- BẢNG CHUNKS + EMBEDDINGS (Đã tích hợp sẵn cột section)
+
+CREATE TABLE document_chunks (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  doc_id       UUID REFERENCES documents(id) ON DELETE CASCADE,
+  notebook_id  UUID REFERENCES notebooks(id) ON DELETE CASCADE,
+  section      TEXT DEFAULT 'Unknown', -- Bổ sung thêm cột section ở đây
+  content      TEXT NOT NULL,
+  page_number  INTEGER,
+  chunk_index  INTEGER,
+  embedding    VECTOR(768),
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE document_chunks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user sees own chunks"
+ON document_chunks FOR ALL
+USING (
+  EXISTS (
+    SELECT 1 FROM notebooks
+    WHERE notebooks.id = document_chunks.notebook_id
+    AND notebooks.user_id = auth.uid()
+  )
+);
+
+CREATE INDEX ON document_chunks 
+USING hnsw (embedding vector_cosine_ops);
+
 GRANT ALL ON public.document_chunks TO anon, authenticated, service_role;
 
--- Function vector search theo notebook_id (backend gọi qua supabase.rpc)
+-- FUNCTION: match_chunks (Đã cập nhật trả về section)
+
 CREATE OR REPLACE FUNCTION match_chunks(
-  query_embedding    VECTOR(768),
+  query_embedding   VECTOR(768),
   target_notebook_id UUID,
-  match_count        INT DEFAULT 5
+  match_count       INT DEFAULT 5,
+  match_threshold   FLOAT DEFAULT 0.0
 )
-RETURNS TABLE (id UUID, content TEXT, page_number INTEGER, doc_id UUID, similarity FLOAT)
+RETURNS TABLE (
+  id UUID, 
+  section TEXT, 
+  content TEXT, 
+  page_number INTEGER, 
+  doc_id UUID, 
+  similarity FLOAT
+)
 LANGUAGE SQL AS $$
-  SELECT id, content, page_number, doc_id,
-    1 - (embedding <=> query_embedding) AS similarity
-  FROM document_chunks
-  WHERE notebook_id = target_notebook_id
-  ORDER BY embedding <=> query_embedding
+  SELECT
+    dc.id,
+    dc.section,     -- Trả về metadata section
+    dc.content,
+    dc.page_number,
+    dc.doc_id,
+    1 - (dc.embedding <=> query_embedding) AS similarity
+  FROM document_chunks dc
+  WHERE dc.notebook_id = target_notebook_id
+    AND 1 - (dc.embedding <=> query_embedding) >= match_threshold
+  ORDER BY dc.embedding <=> query_embedding
   LIMIT match_count;
 $$;
 ```
