@@ -1,6 +1,7 @@
 # app/services/chunker.py
 
 import logging
+import re
 from typing import Any, Dict, List
 
 import tiktoken
@@ -21,6 +22,15 @@ MIN_CHUNK_TOKENS = 30
 # nhưng không ảnh hưởng đáng kể đến chất lượng chunking.
 _tokenizer = tiktoken.get_encoding("cl100k_base")
 
+# Regex nhận diện các section học thuật phổ biến
+# Hỗ trợ cả định dạng số hoặc chữ số La Mã đứng trước (e.g., "1. Introduction", "I. RELATED WORK")
+ACADEMIC_SECTIONS_REGEX = (
+    r'^(?:[0-9]+\.|[IVX]+\.)?\s*'
+    r'(Abstract|Introduction|Related\s+Work|Literature\s+Review|Methodology|'
+    r'Proposed\s+(?:Method|Architecture|System)|Experiments|Evaluation|'
+    r'Results|Discussion|Conclusion|References)\b'
+)
+
 
 def _count_tokens(text: str) -> int:
     """Đếm số token của một chuỗi văn bản."""
@@ -29,36 +39,35 @@ def _count_tokens(text: str) -> int:
 
 def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Chia các trang PDF đã parse thành các chunk theo token.
+    Chia các trang PDF đã parse thành các chunk theo giới hạn token và bóc tách metadata Section.
+
+    Hàm này thực hiện chia nhỏ văn bản bằng RecursiveCharacterTextSplitter,
+    đồng thời quét qua các đoạn văn bản để theo dõi xem người dùng đang ở phần nào của 
+    tài liệu học thuật (Abstract, Introduction, Methodology, v.v.) dựa trên Regex.
 
     Chunking strategy:
     - chunk_size     = 500 tokens  (~1–2 đoạn văn học thuật)
     - chunk_overlap  = 50  tokens  (giữ context tại ranh giới chunk)
     - min_chunk_size = 30  tokens  (bỏ chunk quá ngắn: header, page number...)
-    - length_function đếm token thật sự, không đếm ký tự
-
-    Input format:
-        [
-            {"page_number": int, "content": str},
-            ...
-        ]
-
-    Output format:
-        [
-            {"chunk_index": int, "page_number": int, "content": str},
-            ...
-        ]
-
-    Notes:
-    - chunk_index là global xuyên suốt toàn bộ tài liệu
-    - page_number được giữ nguyên cho mỗi chunk
-    - Trang rỗng, chunk chỉ có whitespace, và chunk < MIN_CHUNK_TOKENS bị bỏ qua
+    - length_function: đếm token thật sự bằng tiktoken cl100k_base, không đếm ký tự.
 
     Args:
-        pages: Danh sách trang đã parse từ pdf_parser.
+        pages (List[Dict[str, Any]]): Danh sách các trang đã được trích xuất từ PDF.
+            Mỗi phần tử có cấu trúc: {"page_number": int, "content": str}
 
     Returns:
-        Danh sách chunk phẳng.
+        List[Dict[str, Any]]: Danh sách các chunk đã được làm phẳng, sẵn sàng để embedding.
+            Mỗi chunk có cấu trúc:
+            {
+                "chunk_index": int,     # Số thứ tự global của chunk trong toàn bộ tài liệu
+                "page_number": int,     # Trang gốc chứa chunk này
+                "section": str,         # Tên phần của tài liệu (ví dụ: 'Introduction')
+                "content": str          # Nội dung text đã được dọn dẹp
+            }
+
+    Notes:
+        - Các trang rỗng, hoặc chunk chỉ chứa khoảng trắng, hoặc chunk có độ dài 
+          nhỏ hơn MIN_CHUNK_TOKENS sẽ tự động bị bỏ qua để giảm nhiễu cho Vector DB.
     """
     if not pages:
         logger.warning("chunk_text nhận danh sách pages rỗng.")
@@ -75,6 +84,9 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     chunk_index = 0
     skipped_pages = 0
     skipped_short = 0
+    
+    # Khởi tạo trạng thái ban đầu khi chưa nhận diện được section nào
+    current_section = "Abstract/Pre-introduction" 
 
     for page in pages:
         page_number = int(page.get("page_number", 0))
@@ -91,23 +103,32 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if not cleaned:
                 continue
 
-            # Bỏ qua chunk quá ngắn — thường là header, số trang, caption lẻ
             if _count_tokens(cleaned) < MIN_CHUNK_TOKENS:
                 skipped_short += 1
                 continue
+
+            # Bóc tách 2 dòng đầu tiên của chunk để kiểm tra xem có Section Header mới không
+            lines = [line.strip() for line in cleaned.split('\n') if line.strip()]
+            for line in lines[:2]:
+                match = re.match(ACADEMIC_SECTIONS_REGEX, line, re.IGNORECASE)
+                if match:
+                    # Chuẩn hóa format chữ (Ví dụ: INTRODUCTION -> Introduction)
+                    current_section = match.group(1).title()
+                    break # Phát hiện rồi thì không cần check dòng tiếp theo nữa
 
             chunks.append(
                 {
                     "chunk_index": chunk_index,
                     "page_number": page_number,
+                    "section": current_section,
                     "content": cleaned,
                 }
             )
             chunk_index += 1
 
     logger.info(
-        f"Chunking hoàn tất: {len(chunks)} chunks từ {len(pages) - skipped_pages} trang "
-        f"({skipped_pages} trang rỗng, {skipped_short} chunk ngắn bị bỏ qua)."
+        f"Chunking hoàn tất: {len(chunks)} chunks từ {len(pages) - skipped_pages} trang. "
+        f"Cấu trúc tài liệu đã được bóc tách."
     )
 
     return chunks

@@ -54,15 +54,6 @@ class NotebookListResponse(BaseModel):
     success: bool = True
     data: dict
 
-
-class DocumentItem(BaseModel):
-    doc_id: str
-    filename: str
-    page_count: int
-    chunk_count: int
-    created_at: str
-
-
 # ---------------------------
 # Endpoints
 # ---------------------------
@@ -289,6 +280,7 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             {
                 "doc_id": doc_id,
                 "notebook_id": notebook_id,          # ← thêm notebook_id để search nhanh
+                "section": chunks[i].get("section", "Unknown"),
                 "content": chunks[i]["content"],
                 "page_number": chunks[i]["page_number"],
                 "chunk_index": i,

@@ -70,6 +70,7 @@ class NotebookListData(BaseModel):
 
 class DocumentResponse(BaseModel):
     doc_id: str
+    notebook_id: str
     filename: str
     chunk_count: int
     page_count: int
@@ -102,6 +103,7 @@ class AskRequest(BaseModel):
 
 class SourceChunk(BaseModel):
     chunk_id: str
+    section: str = "Unknown"
     content: str
     page: int
     score: float

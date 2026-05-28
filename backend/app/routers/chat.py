@@ -44,12 +44,13 @@ async def ask(
         print(f"[LLM ERROR] {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=500,
-            detail=_make_error("LLM_FAILED", "Lỗi khi gọi Gemini"),
+            detail=_make_error("LLM_FAILED", "Lỗi khi gọi LLM"),
         )
 
     sources = [
         {
             "chunk_id": c["id"],
+            "section": c.get("section", "Unknown"),
             "content": c["content"],
             "page": c["page_number"],
             "score": round(c["similarity"], 4),
@@ -93,6 +94,7 @@ async def ask_stream(
     sources = [
         {
             "chunk_id": c["id"],
+            "section": c.get("section", "Unknown"),
             "content": c["content"],
             "page": c["page_number"],
             "score": round(c["similarity"], 4),
@@ -113,7 +115,7 @@ async def ask_stream(
 
         except Exception as e:
             print(f"[STREAM ERROR] {type(e).__name__}: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'code': 'LLM_FAILED', 'message': 'Lỗi khi gọi Gemini'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'code': 'LLM_FAILED', 'message': 'Lỗi khi gọi LLM'})}\n\n"
 
     return StreamingResponse(
         event_generator(),

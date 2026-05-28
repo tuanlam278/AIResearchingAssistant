@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Dict, List
 
+import io
 import fitz  # PyMuPDF
 from PIL import Image
 from google import genai
@@ -41,21 +42,8 @@ def _extract_text_direct(file_bytes: bytes) -> List[Dict]:
 
 
 def _is_text_readable(pages: List[Dict]) -> bool:
-    """
-    Kiểm tra text trích xuất trực tiếp có đọc được không.
-
-    Lấy mẫu SAMPLE_PAGES trang đầu, tính độ dài từ trung bình:
-    - Text bình thường        → avg >= MIN_AVG_WORD_LENGTH (3.0)
-    - Text fragment/garbled   → avg <  MIN_AVG_WORD_LENGTH
-
-    Returns:
-        True  → text ổn, dùng được luôn
-        False → cần fallback Vision
-    """
     sample = [p for p in pages[:SAMPLE_PAGES] if p["content"]]
-
     if not sample:
-        logger.info("Readability check: không có trang nào có text → fallback Vision.")
         return False
 
     all_words = []
@@ -63,18 +51,15 @@ def _is_text_readable(pages: List[Dict]) -> bool:
         all_words.extend(page["content"].split())
 
     if len(all_words) < 20:
-        logger.info(
-            f"Readability check: quá ít từ ({len(all_words)}) để đánh giá → fallback Vision."
-        )
         return False
 
     avg_word_length = sum(len(w) for w in all_words) / len(all_words)
-    readable = avg_word_length >= MIN_AVG_WORD_LENGTH
 
-    logger.info(
-        f"Readability check: avg word length = {avg_word_length:.2f} "
-        f"→ {'readable ✓' if readable else 'fragment/garbled → fallback Vision'}"
-    )
+    # Fix: thêm kiểm tra tỉ lệ từ có >= 2 ký tự
+    # PDF font fragment sẽ có rất nhiều từ 1 ký tự
+    ratio_long_words = sum(1 for w in all_words if len(w) >= 2) / len(all_words)
+
+    readable = avg_word_length >= MIN_AVG_WORD_LENGTH or ratio_long_words >= 0.7
     return readable
 
 
@@ -102,6 +87,11 @@ async def _extract_text_from_image(image: Image.Image, page_num: int) -> str:
     Gọi Gemini Vision để trích xuất text từ một trang ảnh.
     Trả về chuỗi rỗng nếu lỗi (không raise để tiếp tục các trang khác).
     """
+    # Convert PIL Image → JPEG bytes để Gemini SDK chấp nhận
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=85)
+    image_bytes = buf.getvalue()
+
     prompt = """
     Hãy đóng vai một chuyên gia bóc tách dữ liệu. Nhiệm vụ của bạn là trích xuất toàn bộ nội dung trong bức ảnh (trang tài liệu) này sang định dạng Markdown.
 
@@ -117,8 +107,11 @@ async def _extract_text_from_image(image: Image.Image, page_num: int) -> str:
     for attempt in range(1, 4):  # tối đa 3 lần
         try:
             response = await client.aio.models.generate_content(
-                model="gemini-3.5-flash",
-                contents=[image, prompt],
+                model="gemini-2.5-flash",
+                contents=[
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                    prompt,
+                ],
                 config=types.GenerateContentConfig(temperature=0.0),
             )
             return response.text.strip()

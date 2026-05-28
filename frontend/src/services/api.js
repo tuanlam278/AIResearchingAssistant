@@ -96,4 +96,40 @@ export const api = {
         { headers: authHeader(token) }
       )
     ),
+  streamResearchQuery: async ({ notebookId, question, chatHistory = [] }, token, callbacks) => {
+    const response = await fetch(`${BASE_URL}/api/chat/ask/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        notebook_id: notebookId,
+        question,
+        chat_history: chatHistory,
+      }),
+    });
+
+    if (!response.ok) throw new Error("Stream request failed");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const lines = decoder.decode(value).split("\n");
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === "sources") callbacks.onSources?.(event.sources);
+          if (event.type === "token")   callbacks.onToken?.(event.content);
+          if (event.type === "done")    callbacks.onDone?.();
+          if (event.type === "error")   callbacks.onError?.(event.message);
+        } catch {}
+      }
+    }
+  },
 };

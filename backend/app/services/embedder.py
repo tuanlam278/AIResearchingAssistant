@@ -18,7 +18,7 @@ client = genai.Client(api_key=settings.GOOGLE_API_KEY)
 EMBEDDING_MODEL = getattr(settings, "EMBEDDING_MODEL", "gemini-embedding-001")
 EMBEDDING_DIMENSIONS = 768  # Phải khớp với schema Supabase: VECTOR(768)
 BATCH_SIZE = 100             # Giới hạn của Gemini Embedding API
-RATE_LIMIT_SLEEP = 60        # Giây chờ giữa các batch (tránh 429)
+RATE_LIMIT_SLEEP = 1         # Giây chờ giữa các batch (tránh 429)
 MAX_RETRIES = 3              # Số lần retry khi gặp lỗi tạm thời
 
 

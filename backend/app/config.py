@@ -4,6 +4,7 @@ from typing import List
 
 class Settings(BaseSettings):
     GOOGLE_API_KEY: str
+    GROQ_API_KEY: str
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
     SUPABASE_ANON_KEY: str
@@ -15,6 +16,7 @@ class Settings(BaseSettings):
 
     # Retrieval
     TOP_K_CHUNKS: int = 5
+    MIN_SIMILARITY: float = 0.5
 
     # Limits
     MAX_FILE_SIZE_MB: int = 20

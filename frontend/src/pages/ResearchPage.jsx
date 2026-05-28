@@ -96,6 +96,7 @@ export default function ResearchPage() {
   const [error, setError] = useState("");
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
+  const [streamingAnswer, setStreamingAnswer] = useState("");
 
   const chatHistory = useMemo(
     () => messages.map(({ role, content }) => ({ role, content })),
@@ -112,19 +113,35 @@ export default function ResearchPage() {
 
     setError("");
     setInput("");
+    setStreamingAnswer("");
     setMessages(prev => [...prev, { role: "user", content: question }]);
     setLoading(true);
 
+    let fullAnswer = "";
+
     try {
-      const response = await api.sendResearchQuery({ notebookId, question, chatHistory }, token);
-      const answer = response?.answer || response?.message || response?.content || "Không có nội dung trả lời.";
-      setMessages(prev => [...prev, { role: "assistant", content: answer }]);
-      const nextSources = response?.sources || response?.citations || response?.documents || [];
-      setSources(Array.isArray(nextSources) ? nextSources : []);
-      if (nextSources.length > 0) setSources(nextSources);
+      await api.streamResearchQuery(
+        { notebookId, question, chatHistory },
+        token,
+        {
+          onSources: (srcs) => setSources(Array.isArray(srcs) ? srcs : []),
+          onToken: (token) => {
+            fullAnswer += token;
+            setStreamingAnswer(fullAnswer);
+          },
+          onDone: () => {
+            setMessages(prev => [...prev, { role: "assistant", content: fullAnswer }]);
+            setStreamingAnswer("");
+            setLoading(false);
+          },
+          onError: (msg) => {
+            setError(msg || "Lỗi khi nhận phản hồi.");
+            setLoading(false);
+          },
+        }
+      );
     } catch (err) {
-      setError(err.message || "Không thể nhận phản hồi từ hệ thống.");
-    } finally {
+      setError(err.message || "Không thể kết nối server.");
       setLoading(false);
     }
   };
@@ -345,7 +362,28 @@ export default function ResearchPage() {
                 ))
               )}
 
-              {loading && (
+              {streamingAnswer && (
+                <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                    background: "linear-gradient(135deg, #c4a464, #8a6a30)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 14, marginRight: 10, marginTop: 2, boxShadow: "0 2px 8px rgba(196,164,100,0.3)",
+                  }}>✦</div>
+                  <div style={{
+                    maxWidth: "75%", padding: "12px 16px",
+                    borderRadius: "18px 18px 18px 4px",
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    color: "#d4cfc8", fontSize: 14, lineHeight: 1.7, whiteSpace: "pre-wrap",
+                    fontFamily: "'Lora', Georgia, serif",
+                  }}>
+                    {streamingAnswer}<span style={{ opacity: 0.5 }}>▌</span>
+                  </div>
+                </div>
+              )}
+
+              {loading && !streamingAnswer && (
                 <div className="rp-typing">
                   <div className="rp-typing-dots">
                     <span /><span /><span />
