@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     MIN_SIMILARITY: float = 0.5
 
     # Limits
-    MAX_FILE_SIZE_MB: int = 20
+    MAX_UPLOAD_MB: int = 50
+    MAX_FILE_SIZE_MB: int = 50  # Backward-compatible alias for older env files
     MAX_QUESTION_LENGTH: int = 1000
     MAX_CHAT_HISTORY_TURNS: int = 10
 

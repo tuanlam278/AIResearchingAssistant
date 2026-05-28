@@ -103,10 +103,17 @@ class AskRequest(BaseModel):
 
 class SourceChunk(BaseModel):
     chunk_id: str
+    citation_index: int
+    id: str
+    document_id: Optional[str] = None
+    document_title: str = "Tài liệu"
     section: str = "Unknown"
     content: str
+    snippet: str
     page: int
-    score: float
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
+    score: Optional[float] = None
 
 
 class AskResponse(BaseModel):

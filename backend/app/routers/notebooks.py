@@ -192,7 +192,8 @@ async def upload_documents(
             detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy notebook"},
         )
 
-    max_size_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
+    max_upload_mb = getattr(settings, "MAX_UPLOAD_MB", settings.MAX_FILE_SIZE_MB)
+    max_size_bytes = max_upload_mb * 1024 * 1024
     results = []
 
     for file in files:
@@ -228,7 +229,12 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
 
     # Validate file size
     if len(contents) > max_size_bytes:
-        return {"filename": file.filename, "status": "error", "error": "FILE_TOO_LARGE"}
+        return {
+            "filename": file.filename,
+            "status": "error",
+            "error": "FILE_TOO_LARGE",
+            "message": f"File quá lớn. Vui lòng chọn file dưới {max_size_bytes // 1024 // 1024}MB.",
+        }
 
     # Parse PDF
     try:

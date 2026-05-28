@@ -3,6 +3,9 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
+const MAX_UPLOAD_MB = Number(import.meta.env.VITE_MAX_UPLOAD_MB || 50);
+const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -239,6 +242,31 @@ const STYLES = `
   .nbp-empty-text { font-family: 'Lora', Georgia, serif; font-size: 14px; color: #5a5040; margin-bottom: 4px; }
   .nbp-empty-sub { font-size: 12px; color: #3a3020; }
 
+  /* Summary panel */
+  .nbp-summary-grid { display: grid; gap: 14px; }
+  .nbp-summary-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+  .nbp-summary-kicker { font-size: 11px; color: #c4a464; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+  .nbp-summary-title { font-family: 'Lora', Georgia, serif; font-size: 18px; color: #e8e0d0; margin-bottom: 6px; }
+  .nbp-summary-sub { font-size: 13px; color: #6a6050; line-height: 1.55; }
+  .nbp-summary-status { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 99px; background: rgba(196,164,100,0.1); color: #c4a464; font-size: 12px; white-space: nowrap; }
+  .nbp-summary-error { border: 1px solid rgba(224,120,120,0.2); color: #e07878; background: rgba(224,120,120,0.08); border-radius: 10px; padding: 10px 12px; font-size: 12px; }
+  .nbp-overall-summary { background: rgba(196,164,100,0.06); border: 1px solid rgba(196,164,100,0.15); border-radius: 13px; padding: 14px; }
+  .nbp-overall-summary p { color: #b8ad9c; font-size: 13px; line-height: 1.7; margin: 0; }
+  .nbp-key-points { margin-top: 10px; display: grid; gap: 7px; }
+  .nbp-key-point { color: #8a8070; font-size: 12px; line-height: 1.5; display: flex; gap: 8px; }
+  .nbp-doc-summary-card { background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.075); border-radius: 13px; padding: 14px; }
+  .nbp-doc-summary-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .nbp-doc-summary-name { font-family: 'Lora', Georgia, serif; color: #d4cfc8; font-size: 14px; font-weight: 600; }
+  .nbp-doc-status { font-size: 11px; border-radius: 99px; padding: 2px 8px; background: rgba(80,180,80,0.1); border: 1px solid rgba(80,180,80,0.18); color: #78c878; white-space: nowrap; }
+  .nbp-doc-status.failed { color: #e07878; background: rgba(224,120,120,0.08); border-color: rgba(224,120,120,0.2); }
+  .nbp-doc-summary-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+  .nbp-doc-summary-tags span { font-size: 11px; color: #6a6050; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 99px; padding: 2px 8px; }
+  .nbp-doc-summary-text { color: #8a8070; font-size: 12px; line-height: 1.65; margin: 0; }
+  .nbp-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .nbp-suggestion-chip { border: 1px solid rgba(196,164,100,0.18); background: rgba(196,164,100,0.08); color: #c4a464; border-radius: 999px; padding: 8px 11px; cursor: pointer; font-size: 12px; text-align: left; }
+  .nbp-suggestion-chip:hover { background: rgba(196,164,100,0.14); border-color: rgba(196,164,100,0.35); }
+  .nbp-summary-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+
   /* Loading */
   .nbp-loading {
     display: flex; align-items: center; justify-content: center;
@@ -262,6 +290,91 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+
+function DocumentSummaryPanel({ summary, loading, error, onStartChat, onQuestionClick }) {
+  const documents = summary?.documents || [];
+  const suggestions = summary?.suggested_questions || [];
+  const keyPoints = summary?.overall_key_points || [];
+  if (!loading && !error && documents.length === 0 && !summary?.overall_summary) return null;
+
+  return (
+    <div className="nbp-section">
+      <div className="nbp-summary-head">
+        <div>
+          <div className="nbp-summary-kicker">AI đã đọc tài liệu của bạn</div>
+          <h2 className="nbp-summary-title">Tổng quan tài liệu</h2>
+          <p className="nbp-summary-sub">
+            {documents.length > 0
+              ? `${documents.length} tài liệu đã sẵn sàng để trò chuyện.`
+              : 'Sau khi upload xong, tổng quan và câu hỏi gợi ý sẽ hiển thị tại đây.'}
+          </p>
+        </div>
+        {loading && <span className="nbp-summary-status"><span className="nbp-spinner" /> Đang tạo tóm tắt...</span>}
+      </div>
+
+      {error && <div className="nbp-summary-error">⚠ {error}</div>}
+
+      {summary?.overall_summary && (
+        <div className="nbp-overall-summary">
+          <p>{summary.overall_summary}</p>
+          {keyPoints.length > 0 && (
+            <div className="nbp-key-points">
+              {keyPoints.map((point, index) => (
+                <div key={index} className="nbp-key-point"><span>•</span><span>{point}</span></div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {documents.length > 0 && (
+        <div className="nbp-summary-grid" style={{ marginTop: 14 }}>
+          {documents.map((doc) => (
+            <div key={doc.id || doc.doc_id || doc.filename} className="nbp-doc-summary-card">
+              <div className="nbp-doc-summary-top">
+                <div className="nbp-doc-summary-name">{doc.title || doc.filename}</div>
+                <span className={`nbp-doc-status ${doc.status === 'failed' ? 'failed' : ''}`}>{doc.status || 'ready'}</span>
+              </div>
+              <div className="nbp-doc-summary-tags">
+                <span>{doc.filename}</span>
+                <span>{doc.page_count || 0} trang</span>
+                <span>{doc.chunk_count || 0} chunks</span>
+              </div>
+              {doc.summary && <p className="nbp-doc-summary-text">{doc.summary}</p>}
+              {Array.isArray(doc.key_points) && doc.key_points.length > 0 && (
+                <div className="nbp-key-points">
+                  {doc.key_points.slice(0, 3).map((point, index) => (
+                    <div key={index} className="nbp-key-point"><span>•</span><span>{point}</span></div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {suggestions.length > 0 && (
+        <>
+          <h3 className="nbp-section-title" style={{ marginTop: 18 }}>Gợi ý câu hỏi</h3>
+          <div className="nbp-suggestions">
+            {suggestions.map((question, index) => (
+              <button key={index} className="nbp-suggestion-chip" onClick={() => onQuestionClick(question)}>
+                {question}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {documents.length > 0 && (
+        <div className="nbp-summary-actions">
+          <button className="nbp-research-btn" onClick={onStartChat}>✦ Bắt đầu trò chuyện</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function NotebookPage() {
   const { notebookId } = useParams();
   const navigate = useNavigate();
@@ -279,6 +392,9 @@ export default function NotebookPage() {
   const [progress, setProgress] = useState(0);
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState('');
+  const [summaryData, setSummaryData] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState('');
 
   const fetchDocuments = async () => {
     if (!token) return;
@@ -293,11 +409,40 @@ export default function NotebookPage() {
     }
   };
 
+  const loadDocumentSummary = async (documentIds = null, { generate = false } = {}) => {
+    if (!token) return;
+    setSummaryLoading(true);
+    setSummaryError('');
+    try {
+      const result = generate
+        ? await api.generateWorkspaceDocumentSummary(notebookId, documentIds, token)
+        : await api.getWorkspaceDocumentSummary(notebookId, token);
+      setSummaryData(result);
+    } catch (err) {
+      setSummaryError(err.message || 'Không thể tạo tổng quan tài liệu.');
+      if (!summaryData && documents.length > 0) {
+        setSummaryData({ documents, overall_summary: '', overall_key_points: [], suggested_questions: [] });
+      }
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const goToChat = (question = '') => {
+    navigate(`/research/${notebookId}`, {
+      state: {
+        prefillQuestion: question,
+        suggestedQuestions: summaryData?.suggested_questions || [],
+      },
+    });
+  };
+
   useEffect(() => {
     // Lấy tên notebook từ localStorage nếu có (được set ở NotebooksPage khi navigate)
     const saved = sessionStorage.getItem(`nb_name_${notebookId}`);
     if (saved) setNotebookName(saved);
     fetchDocuments();
+    loadDocumentSummary(null, { generate: false });
   }, [notebookId, token]);
 
   // ── Drag & Drop ──────────────────────────────────────────────────────────
@@ -316,11 +461,16 @@ export default function NotebookPage() {
     setUploadResult(null); setUploadError('');
     const pdfs = newFiles.filter(f => f.type === 'application/pdf');
     const invalid = newFiles.length - pdfs.length;
-    if (invalid > 0) setUploadError(`${invalid} file không phải PDF đã bị bỏ qua.`);
+    const tooLarge = pdfs.filter(f => f.size > MAX_UPLOAD_BYTES);
+    const validPdfs = pdfs.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    const messages = [];
+    if (invalid > 0) messages.push(`${invalid} file không phải PDF đã bị bỏ qua.`);
+    if (tooLarge.length > 0) messages.push(`${tooLarge.length} file vượt quá ${MAX_UPLOAD_MB}MB đã bị bỏ qua.`);
+    if (messages.length > 0) setUploadError(messages.join(' '));
 
     setSelectedFiles(prev => {
       const existing = new Set(prev.map(f => f.name));
-      const added = pdfs.filter(f => !existing.has(f.name));
+      const added = validPdfs.filter(f => !existing.has(f.name));
       return [...prev, ...added];
     });
   };
@@ -336,7 +486,13 @@ export default function NotebookPage() {
       const result = await api.uploadDocuments(notebookId, selectedFiles, token, setProgress);
       setUploadResult(result);
       setSelectedFiles([]);
+      const uploadedIds = (result.uploaded || []).map(doc => doc.doc_id).filter(Boolean);
       await fetchDocuments();
+      if (uploadedIds.length > 0) {
+        await loadDocumentSummary(uploadedIds, { generate: true });
+      } else {
+        setSummaryData({ documents: result.failed || [], overall_summary: '', overall_key_points: [], suggested_questions: [] });
+      }
     } catch (err) {
       setUploadError(err.message || 'Upload thất bại, vui lòng thử lại.');
     } finally {
@@ -370,7 +526,7 @@ export default function NotebookPage() {
           <button
             className="nbp-research-btn"
             disabled={!canResearch}
-            onClick={() => navigate(`/research/${notebookId}`)}
+            onClick={() => goToChat()}
             title={canResearch ? 'Bắt đầu hỏi đáp' : 'Cần có ít nhất 1 tài liệu'}
           >
             ✦ Bắt đầu nghiên cứu
@@ -413,7 +569,7 @@ export default function NotebookPage() {
                   <p className="nbp-dropzone-text">
                     <span>Chọn file</span> hoặc kéo thả PDF vào đây
                   </p>
-                  <p className="nbp-dropzone-hint">Hỗ trợ nhiều file · PDF · Tối đa 20MB/file</p>
+                  <p className="nbp-dropzone-hint">Hỗ trợ nhiều file · PDF · Tối đa {MAX_UPLOAD_MB}MB/file</p>
                 </>
               )}
             </div>
@@ -460,9 +616,26 @@ export default function NotebookPage() {
                   ? `✓ Upload thành công ${uploadResult.uploaded?.length} file.`
                   : `✓ ${uploadResult.uploaded?.length} file thành công · ✕ ${uploadResult.failed?.length} file thất bại`
                 }
+                {uploadResult.failed?.length > 0 && (
+                  <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
+                    {uploadResult.failed.map((file) => (
+                      <span key={file.filename} style={{ color: '#e07878' }}>
+                        {file.filename}: {file.message || file.error || 'Upload thất bại'}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          <DocumentSummaryPanel
+            summary={summaryData}
+            loading={summaryLoading}
+            error={summaryError}
+            onStartChat={() => goToChat()}
+            onQuestionClick={goToChat}
+          />
 
           {/* Documents section */}
           <div className="nbp-section">

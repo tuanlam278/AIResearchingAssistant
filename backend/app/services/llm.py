@@ -1,6 +1,7 @@
 """
 LLM generation với Llama 3.3 70B via Groq
 """
+import json
 import logging
 import tiktoken
 from groq import AsyncGroq
@@ -56,7 +57,8 @@ def _build_messages(
         "Trả lời câu hỏi dựa trên các đoạn trích sau từ tài liệu.\n"
         "Nếu không tìm thấy câu trả lời trong tài liệu, hãy nói rõ "
         '"Tôi không tìm thấy thông tin này trong tài liệu".\n'
-        "Trả lời bằng ngôn ngữ của câu hỏi (tiếng Việt hoặc tiếng Anh).\n\n"
+        "Trả lời bằng ngôn ngữ của câu hỏi (tiếng Việt hoặc tiếng Anh).\n"
+        "Khi dùng thông tin từ đoạn trích, hãy trích dẫn bằng chỉ số nguồn dạng [1], [2] ngay sau ý liên quan.\n\n"
         "--- Đoạn trích từ tài liệu ---\n"
     )
     
@@ -67,10 +69,10 @@ def _build_messages(
     context_parts = []
     chunk_token_limit = MAX_PROMPT_TOKENS - RESERVED_HISTORY_TOKENS
 
-    for chunk in chunks:
+    for index, chunk in enumerate(chunks, start=1):
         # Khai thác metadata 'section'. Dùng .get(..., 'Unknown') nhằm tương thích ngược với các chunk cũ
         section = chunk.get("section", "Unknown")
-        chunk_text = f"[Trang {chunk['page_number']} - Phần {section}] {chunk['content']}"
+        chunk_text = f"[{index}] [Trang {chunk['page_number']} - Phần {section}] {chunk['content']}"
         chunk_tokens = _count_tokens(chunk_text)
         
         if current_tokens + chunk_tokens > chunk_token_limit:
@@ -174,3 +176,106 @@ async def generate_answer_stream(
     except Exception as e:
         logger.error(f"Groq API error (stream): {e}")
         raise RuntimeError(f"LLM_FAILED: {e}") from e
+
+
+def _extract_json_object(text: str) -> dict:
+    """Extract the first JSON object from an LLM response."""
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise
+        return json.loads(cleaned[start : end + 1])
+
+
+def _trim_text_for_summary(text: str, max_tokens: int = 1200) -> str:
+    tokens = _tokenizer.encode(text or "")
+    if len(tokens) <= max_tokens:
+        return text or ""
+    return _tokenizer.decode(tokens[:max_tokens])
+
+
+async def generate_workspace_summary(documents: List[dict]) -> dict:
+    """
+    Generate document-level and workspace-level summaries from uploaded document chunks.
+
+    Returns JSON-compatible dict:
+    {
+      "documents": [{"id", "title", "summary", "key_points", "suggested_questions"}],
+      "overall_summary": str,
+      "overall_key_points": list[str],
+      "suggested_questions": list[str]
+    }
+    """
+    if not documents:
+        return {
+            "documents": [],
+            "overall_summary": "",
+            "overall_key_points": [],
+            "suggested_questions": [],
+        }
+
+    document_blocks = []
+    budget_per_doc = max(700, min(1400, 4200 // max(len(documents), 1)))
+    for index, doc in enumerate(documents, start=1):
+        chunks = doc.get("chunks") or []
+        chunk_text = "\n\n".join(
+            f"[Trang {chunk.get('page_number', '?')}] {chunk.get('content', '')}"
+            for chunk in chunks[:8]
+        )
+        document_blocks.append(
+            "\n".join(
+                [
+                    f"Tài liệu {index}",
+                    f"id: {doc.get('id')}",
+                    f"filename: {doc.get('filename')}",
+                    f"page_count: {doc.get('page_count')}",
+                    f"chunk_count: {doc.get('chunk_count')}",
+                    "Nội dung trích xuất:",
+                    _trim_text_for_summary(chunk_text, budget_per_doc),
+                ]
+            )
+        )
+
+    prompt = (
+        "Bạn là trợ lý nghiên cứu AI. Hãy đọc các trích đoạn tài liệu đã upload và tạo JSON hợp lệ. "
+        "Không bịa thông tin ngoài nội dung được cung cấp. Nếu thiếu thông tin, viết ngắn gọn theo phần có sẵn.\n\n"
+        "Yêu cầu JSON chính xác theo schema:\n"
+        "{\n"
+        "  \"documents\": [\n"
+        "    {\"id\": \"...\", \"title\": \"...\", \"summary\": \"...\", \"key_points\": [\"...\"], \"suggested_questions\": [\"...\"]}\n"
+        "  ],\n"
+        "  \"overall_summary\": \"...\",\n"
+        "  \"overall_key_points\": [\"3-5 ý chính\"],\n"
+        "  \"suggested_questions\": [\"4-6 câu hỏi cụ thể dựa trên tài liệu\"]\n"
+        "}\n\n"
+        "Tài liệu:\n"
+        + "\n\n---\n\n".join(document_blocks)
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": "Chỉ trả về JSON hợp lệ, không markdown."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+        )
+        parsed = _extract_json_object(response.choices[0].message.content)
+    except Exception as e:
+        logger.error(f"Groq API error (summary): {e}")
+        raise RuntimeError(f"SUMMARY_FAILED: {e}") from e
+
+    parsed.setdefault("documents", [])
+    parsed.setdefault("overall_summary", "")
+    parsed.setdefault("overall_key_points", [])
+    parsed.setdefault("suggested_questions", [])
+    return parsed

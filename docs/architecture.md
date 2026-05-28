@@ -61,6 +61,27 @@ Mỗi file xử lý độc lập — file lỗi không ảnh hưởng file khác
 > **Streaming (SSE):** Backend đã implement endpoint `POST /api/chat/ask/stream`,
 > trả về từng token qua Server-Sent Events. Frontend chưa tích hợp streaming — đang dùng non-streaming.
 
+
+### Post-upload Summary Flow
+
+```
+[Upload PDFs thành công]
+        │
+        ▼
+[Frontend NotebookPage]
+        │ POST /api/workspaces/{workspace_id}/documents/summary/generate
+        ▼
+[FastAPI] lấy documents + document_chunks theo workspace/notebook
+        │
+        ▼
+[LLM service hiện có] tạo summary từng tài liệu, tổng quan chung, suggested_questions
+        │
+        ▼
+[Summary Panel] hiển thị trước khi user vào ChatBox
+```
+
+Không có left sidebar document list trong flow này; suggested question chỉ fill input khi vào Chat.
+
 ---
 
 ## Supabase Schema
@@ -139,6 +160,34 @@ CREATE INDEX ON document_chunks
 USING hnsw (embedding vector_cosine_ops);
 
 GRANT ALL ON public.document_chunks TO anon, authenticated, service_role;
+
+
+-- BẢNG NOTES
+
+CREATE TABLE notes (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id      UUID REFERENCES notebooks(id) ON DELETE CASCADE,
+  title             TEXT NOT NULL,
+  content           TEXT NOT NULL,
+  citations         JSONB DEFAULT '[]'::jsonb,
+  source_message_id TEXT,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE notes ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "user sees own notes"
+ON notes FOR ALL
+USING (
+  EXISTS (
+    SELECT 1 FROM notebooks
+    WHERE notebooks.id = notes.workspace_id
+    AND notebooks.user_id = auth.uid()
+  )
+);
+
+GRANT ALL ON public.notes TO anon, authenticated, service_role;
 
 -- FUNCTION: match_chunks (Đã cập nhật trả về section)
 

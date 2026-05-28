@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import documents, chat, auth, notebooks   # ← thêm notebooks
+from app.routers import documents, chat, auth, notebooks, notes, workspaces
 from app.config import settings
 
 app = FastAPI(
@@ -18,9 +18,11 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
-app.include_router(notebooks.router, prefix="/api/notebooks", tags=["notebooks"])   # ← thêm
+app.include_router(notebooks.router, prefix="/api/notebooks", tags=["notebooks"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(notes.router, prefix="/api", tags=["notes"])
+app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
 
 
 @app.get("/api/health")

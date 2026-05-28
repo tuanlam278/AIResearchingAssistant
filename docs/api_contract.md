@@ -53,7 +53,7 @@ Backend sử dụng FastAPI `HTTPException`, response lỗi có dạng:
 | `EMAIL_TAKEN` | 409 | Email đã được đăng ký |
 | `EMAIL_NOT_CONFIRMED` | 401 | Email chưa được xác nhận qua Supabase |
 | `INVALID_CREDENTIALS` | 401 | Sai email hoặc mật khẩu |
-| `FILE_TOO_LARGE` | 413 | File vượt quá 20MB |
+| `FILE_TOO_LARGE` | 413 | File vượt quá 50MB |
 | `INVALID_FILE_TYPE` | 415 | Chỉ chấp nhận PDF |
 | `PARSE_FAILED` | 422 | Không thể đọc nội dung PDF |
 | `DOC_NOT_FOUND` | 404 | Không tìm thấy tài liệu hoặc notebook |
@@ -228,8 +228,8 @@ Upload **nhiều file PDF** cùng lúc. Mỗi file được parse → chunk → 
 Content-Type: multipart/form-data
 Authorization: Bearer <access_token>
 
-files: <PDF file 1, max 20MB>
-files: <PDF file 2, max 20MB>
+files: <PDF file 1, max 50MB>
+files: <PDF file 2, max 50MB>
 ...
 ```
 
@@ -290,6 +290,53 @@ files: <PDF file 2, max 20MB>
   }
 }
 ```
+
+
+---
+
+### N6. Lấy tổng quan tài liệu trong workspace/notebook
+
+**`GET /api/workspaces/{workspace_id}/documents/summary`**
+
+Trả metadata tài liệu đã upload. Nếu chưa generate summary, các trường summary/suggested questions có thể rỗng.
+
+### N7. Generate tổng quan tài liệu và gợi ý câu hỏi
+
+**`POST /api/workspaces/{workspace_id}/documents/summary/generate`**
+
+#### Request Body
+```json
+{
+  "document_ids": ["doc_a", "doc_b"]
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "documents": [
+      {
+        "id": "doc_a",
+        "filename": "paper.pdf",
+        "title": "Paper title",
+        "page_count": 10,
+        "chunk_count": 35,
+        "status": "ready",
+        "summary": "Tóm tắt ngắn...",
+        "key_points": ["..."],
+        "suggested_questions": ["..."]
+      }
+    ],
+    "overall_summary": "Tổng quan chung...",
+    "overall_key_points": ["..."],
+    "suggested_questions": ["Câu hỏi gợi ý..."]
+  }
+}
+```
+
+> Flow hiện tại không có left sidebar: FE hiển thị Summary Panel ngay sau upload trên trang notebook, rồi user bấm “Bắt đầu trò chuyện” hoặc chọn suggested question để vào ChatBox.
 
 ---
 
@@ -354,8 +401,30 @@ files: <PDF file 2, max 20MB>
   "data": {
     "answer": "Transformer sử dụng cơ chế Self-Attention để...",
     "sources": [
-      { "chunk_id": "uuid", "content": "We propose...", "page": 2, "score": 0.92 },
-      { "chunk_id": "uuid", "content": "An attention function...", "page": 3, "score": 0.87 }
+      {
+        "id": "chunk-uuid",
+        "chunk_id": "chunk-uuid",
+        "citation_index": 1,
+        "document_id": "doc-uuid",
+        "document_title": "attention_is_all_you_need.pdf",
+        "page_start": 2,
+        "page_end": 2,
+        "snippet": "We propose...",
+        "score": 0.92
+      }
+    ],
+    "citations": [
+      {
+        "id": "chunk-uuid",
+        "chunk_id": "chunk-uuid",
+        "citation_index": 1,
+        "document_id": "doc-uuid",
+        "document_title": "attention_is_all_you_need.pdf",
+        "page_start": 2,
+        "page_end": 2,
+        "snippet": "We propose...",
+        "score": 0.92
+      }
     ],
     "tokens_used": 1240
   }
@@ -364,7 +433,7 @@ files: <PDF file 2, max 20MB>
 
 ---
 
-### C2. Hỏi đáp (streaming) ← **Backend sẵn sàng, FE chưa implement**
+### C2. Hỏi đáp (streaming) ← **Đang dùng cho Chat/RAG UX**
 
 **`POST /api/chat/ask/stream`**
 
@@ -377,7 +446,10 @@ Giống endpoint `/ask` ở trên (dùng `notebook_id`).
 ```
 Content-Type: text/event-stream
 
-data: {"type": "sources", "sources": [...]}
+data: {"type": "status", "status": "reading", "message": "Đang đọc tài liệu..."}
+data: {"type": "status", "status": "retrieving", "message": "Đang tìm đoạn liên quan..."}
+data: {"type": "sources", "sources": [...], "citations": [...]}
+data: {"type": "status", "status": "generating", "message": "Đang tạo câu trả lời..."}
 data: {"type": "token", "content": "Transformer"}
 data: {"type": "token", "content": " sử dụng"}
 data: {"type": "done"}
@@ -397,6 +469,78 @@ fetch('/api/chat/ask/stream', {
   },
   body: JSON.stringify({ notebook_id, question, chat_history })
 })
+```
+
+
+---
+
+## Endpoints — Notes *(cần token)*
+
+Notes thuộc một workspace hiện được map với `notebook_id`. User chỉ được xem/sửa/xoá notes trong workspace/notebook của chính mình.
+
+### NT1. Lấy danh sách ghi chú
+
+**`GET /api/workspaces/{workspace_id}/notes`**
+
+#### Response `200 OK`
+```json
+{
+  "success": true,
+  "data": {
+    "notes": [
+      {
+        "id": "note-uuid",
+        "workspace_id": "notebook-uuid",
+        "title": "Transformer sử dụng cơ chế Self-Attention",
+        "content": "Transformer sử dụng...",
+        "citations": [],
+        "source_message_id": "assistant-message-id",
+        "created_at": "2024-01-15T10:30:00Z",
+        "updated_at": "2024-01-15T10:35:00Z"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+### NT2. Tạo ghi chú từ Chat
+
+**`POST /api/workspaces/{workspace_id}/notes`**
+
+#### Request Body
+```json
+{
+  "title": "Transformer sử dụng cơ chế Self-Attention",
+  "content": "Transformer sử dụng...",
+  "citations": [],
+  "source_message_id": "assistant-message-id"
+}
+```
+
+> Notes chỉ được tạo khi user bấm “Lưu vào ghi chú” trên assistant message; Studio/quick actions không tự tạo note.
+
+### NT3. Cập nhật ghi chú
+
+**`PATCH /api/notes/{note_id}`**
+
+```json
+{
+  "title": "Tiêu đề mới",
+  "content": "Nội dung đã chỉnh sửa",
+  "citations": []
+}
+```
+
+### NT4. Xoá ghi chú
+
+**`DELETE /api/notes/{note_id}`**
+
+```json
+{
+  "success": true,
+  "data": { "note_id": "note-uuid", "deleted": true }
+}
 ```
 
 ---
@@ -444,10 +588,17 @@ interface Document {
 ### Source
 ```typescript
 interface Source {
+  id: string;
   chunk_id: string;
-  content: string;
-  page: number;
-  score: number;        // Cosine similarity, 0.0 – 1.0
+  citation_index: number;
+  document_id?: string;
+  document_title: string;
+  content?: string;
+  snippet: string;
+  page?: number;
+  page_start?: number;
+  page_end?: number;
+  score?: number;        // Cosine similarity, 0.0 – 1.0
 }
 ```
 
@@ -467,7 +618,7 @@ interface ChatMessage {
 |---------|----------|
 | `password` length | Tối thiểu 6 ký tự |
 | `notebook name` length | 1 – 200 ký tự |
-| File size | 20 MB |
+| File size | 50 MB |
 | File type | PDF only |
 | `question` length | 1000 ký tự |
 | `chat_history` length | Tối đa 20 messages (10 turns) |
