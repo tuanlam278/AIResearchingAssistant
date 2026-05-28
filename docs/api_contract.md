@@ -32,15 +32,18 @@ Authorization: Bearer <access_token>  (BẮT BUỘC với mọi endpoint trừ /
 ```
 
 ### Response lỗi
+
+Backend sử dụng FastAPI `HTTPException`, response lỗi có dạng:
 ```json
 {
-  "success": false,
-  "error": {
+  "detail": {
     "code": "ERROR_CODE",
     "message": "Mô tả lỗi cho user"
   }
 }
 ```
+
+> **Lưu ý FE:** Đọc lỗi qua `err.response?.data?.detail`, không phải `err.response?.data?.error`.
 
 ### Error Codes
 
@@ -299,6 +302,7 @@ files: <PDF file 2, max 20MB>
 **`DELETE /api/documents/{doc_id}`**
 
 > Xóa một file cụ thể trong notebook. Cascade xóa các chunks liên quan.
+> Backend tự kiểm tra quyền sở hữu qua `document → notebook → user_id`.
 
 #### Response `200 OK`
 ```json
@@ -325,7 +329,7 @@ files: <PDF file 2, max 20MB>
 
 ---
 
-### C1. Hỏi đáp (non-streaming)
+### C1. Hỏi đáp (non-streaming) ← **Đang dùng**
 
 **`POST /api/chat/ask`**
 
@@ -360,7 +364,7 @@ files: <PDF file 2, max 20MB>
 
 ---
 
-### C2. Hỏi đáp (streaming — recommended)
+### C2. Hỏi đáp (streaming) ← **Backend sẵn sàng, FE chưa implement**
 
 **`POST /api/chat/ask/stream`**
 
@@ -382,7 +386,7 @@ data: {"type": "error", "code": "LLM_FAILED", "message": "..."}
 
 > Nếu xảy ra lỗi trong quá trình stream, BE gửi event `type: "error"` rồi kết thúc stream (không throw HTTP error).
 
-#### Lưu ý FE:
+#### Lưu ý FE khi implement:
 ```javascript
 // EventSource không hỗ trợ custom header → dùng fetch() thay thế
 fetch('/api/chat/ask/stream', {

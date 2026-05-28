@@ -35,8 +35,7 @@ src/
 ├── pages/
 │   ├── LoginPage.jsx              # Form đăng nhập
 │   ├── RegisterPage.jsx           # Form đăng ký
-│   ├── HomePage.jsx               # Trang chủ (upload + danh sách tài liệu)
-│   ├── Notebookspage.jsx          # Danh sách notebooks của user
+│   ├── Notebookspage.jsx          # Trang chủ: danh sách notebooks của user
 │   ├── Notebookpage.jsx           # Chi tiết notebook: documents + upload
 │   └── ResearchPage.jsx           # Trang hỏi đáp (chat với AI)
 ├── components/
@@ -51,11 +50,11 @@ src/
 ## Routing
 
 ```
-/login                → LoginPage          (public)
-/register             → RegisterPage       (public)
-/                     → HomePage           (cần đăng nhập)
-/notebooks/:notebookId → Notebookpage      (cần đăng nhập)
-/research/:docId      → ResearchPage       (cần đăng nhập)
+/login                   → LoginPage        (public)
+/register                → RegisterPage     (public)
+/                        → Notebookspage    (cần đăng nhập)
+/notebooks/:notebookId   → Notebookpage     (cần đăng nhập)
+/research/:notebookId    → ResearchPage     (cần đăng nhập)
 ```
 
 Nếu chưa đăng nhập mà truy cập route cần auth → redirect về `/login`.  
@@ -68,8 +67,7 @@ Mọi route không khớp → redirect về `/`.
 | `context/AuthContext.jsx` | Minh Tiến | Lưu token + user + isReady, cung cấp cho toàn app |
 | `pages/LoginPage.jsx` | Minh Tiến | Form login, gọi `api.login()`, lưu token vào Context |
 | `pages/RegisterPage.jsx` | Minh Tiến | Form register, redirect sang Login sau khi thành công |
-| `pages/HomePage.jsx` | Minh Tiến | Upload + danh sách tài liệu, nút logout |
-| `pages/Notebookspage.jsx` | Minh Tiến | Danh sách notebooks, tạo mới, điều hướng vào notebook |
+| `pages/Notebookspage.jsx` | Minh Tiến | Danh sách notebooks, tạo mới, điều hướng vào notebook, nút logout |
 | `pages/Notebookpage.jsx` | Minh Tiến | Chi tiết notebook: upload tài liệu, xem documents, vào ResearchPage |
 | `components/DocumentUploader.jsx` | Minh Tiến | Drag-drop, progress bar |
 | `components/DocumentList.jsx` | Minh Tiến | List + delete |

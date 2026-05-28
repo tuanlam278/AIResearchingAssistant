@@ -260,8 +260,31 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ"},
         )
 
+    # Verify ownership: document → notebook → user_id
     try:
-        resp = supabase.table("documents").delete().match({"id": doc_id, "user_id": user_id}).execute()
+        check_resp = (
+            supabase.table("documents")
+            .select("id, notebooks!inner(user_id)")
+            .eq("id", doc_id)
+            .eq("notebooks.user_id", user_id)
+            .execute()
+        )
+    except Exception:
+        logger.exception("Supabase ownership check failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra tài liệu"},
+        )
+
+    check_data, _ = _supabase_response_data(check_resp)
+    if not check_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu"},
+        )
+
+    try:
+        resp = supabase.table("documents").delete().eq("id", doc_id).execute()
     except Exception as exc:
         logger.exception("Supabase delete operation raised an exception")
         raise HTTPException(

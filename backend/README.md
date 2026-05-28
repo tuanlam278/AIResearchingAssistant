@@ -124,7 +124,7 @@ from app.dependencies import get_current_user
 
 @router.get("/something")
 async def something(user=Depends(get_current_user)):
-    user_id = user["id"]    # UUID của user đang đăng nhập
+    user_id = user["user_id"]    # UUID của user đang đăng nhập
     email   = user["email"]
 ```
 

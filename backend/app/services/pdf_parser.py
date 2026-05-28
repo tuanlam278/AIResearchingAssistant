@@ -112,45 +112,60 @@ async def _extract_text_from_image(image: Image.Image, page_num: int) -> str:
     4. Không bỏ sót bất kỳ chữ nào, không bịa thêm nội dung.
     5. Chỉ trả về nội dung Markdown, không thêm lời chào hay giải thích gì thêm.
     """
-    try:
-        response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[image, prompt],
-            config=types.GenerateContentConfig(temperature=0.0),
-        )
-        return response.text.strip()
-    except Exception as e:
-        logger.error(f"Lỗi Gemini Vision trang {page_num}: {e}")
-        return ""
+    RETRYABLE = ("429", "503", "quota", "rate", "unavailable", "overloaded")
+
+    for attempt in range(1, 4):  # tối đa 3 lần
+        try:
+            response = await client.aio.models.generate_content(
+                model="gemini-3.5-flash",
+                contents=[image, prompt],
+                config=types.GenerateContentConfig(temperature=0.0),
+            )
+            return response.text.strip()
+        except Exception as e:
+            err = str(e).lower()
+            logger.error(f"Lỗi Gemini Vision trang {page_num} (lần {attempt}): {type(e).__name__}: {e}")
+            if attempt < 3 and any(k in err for k in RETRYABLE):
+                wait = 10 * attempt  # 10s, 20s
+                logger.warning(f"Thử lại trang {page_num} sau {wait}s...")
+                await asyncio.sleep(wait)
+            else:
+                break
+    return ""
 
 
 async def _parse_with_vision(file_bytes: bytes) -> List[Dict]:
     """
     Parse toàn bộ PDF bằng Gemini Vision (fallback cho scanned/garbled PDF).
-    Gọi API 1 lần mỗi trang, sleep 2s giữa các trang để tránh 429.
+    Các trang được xử lý song song, giới hạn MAX_CONCURRENT trang cùng lúc
+    để tránh rate limit free tier.
     """
     images = await asyncio.to_thread(_convert_pdf_to_images, file_bytes)
     total_pages = len(images)
-    logger.info(f"Vision mode: {total_pages} trang, bắt đầu gọi Gemini...")
+    logger.info(f"Vision mode: {total_pages} trang, bắt đầu gọi Gemini (song song)...")
 
-    pages: List[Dict] = []
-    failed_pages: List[int] = []
+    # Free tier: ~10 RPM → giới hạn 3 trang song song là an toàn
+    MAX_CONCURRENT = 3
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
-    for i, img in enumerate(images, start=1):
-        logger.info(f"Vision: trang {i}/{total_pages}...")
-        content = await _extract_text_from_image(img, i)
+    async def _process_page(i: int, img) -> dict | None:
+        async with semaphore:
+            logger.info(f"Vision: trang {i}/{total_pages}...")
+            content = await _extract_text_from_image(img, i)
+            if content:
+                return {"page_number": i, "content": content}
+            logger.warning(f"Vision: trang {i} không trích xuất được nội dung.")
+            return None
 
-        if content:
-            pages.append({"page_number": i, "content": content})
-        else:
-            failed_pages.append(i)
+    tasks = [_process_page(i, img) for i, img in enumerate(images, start=1)]
+    results = await asyncio.gather(*tasks)
 
-        # Delay tránh rate limit free tier (2s/request ~ 30 RPM)
-        if i < total_pages:
-            await asyncio.sleep(2)
+    pages = [r for r in results if r is not None]
+    pages.sort(key=lambda p: p["page_number"])  # giữ đúng thứ tự trang
 
-    if failed_pages:
-        logger.warning(f"Vision: {len(failed_pages)} trang lỗi: {failed_pages}")
+    failed = total_pages - len(pages)
+    if failed:
+        logger.warning(f"Vision: {failed} trang lỗi.")
 
     return pages
 

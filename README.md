@@ -31,9 +31,9 @@ AIResearchingAssistant/
 |-------|---------|
 | Backend | FastAPI + Python |
 | Frontend | React + Vite + Tailwind CSS |
-| PDF Parse | pdfplumber + PyMuPDF |
+| PDF Parse | PyMuPDF + Gemini Vision (OCR fallback cho scanned PDF) |
 | Chunking | LangChain RecursiveCharacterTextSplitter + tiktoken |
-| Embedding | Google `text-embedding-004` (768 dims) |
+| Embedding | Google `gemini-embedding-001` (768 dims) |
 | Vector DB | Supabase + pgvector |
 | LLM | Gemini 2.5 Flash |
 | Deploy BE | Render |
@@ -66,4 +66,4 @@ npm run dev
 2. Tạo **Notebook** (nhóm tài liệu theo chủ đề)
 3. Upload **nhiều PDF** vào notebook
 4. Đặt câu hỏi — hệ thống tìm kiếm trên **toàn bộ tài liệu trong notebook**
-5. Nhận câu trả lời kèm nguồn trích dẫn (có thể streaming)
+5. Nhận câu trả lời kèm nguồn trích dẫn

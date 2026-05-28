@@ -14,15 +14,16 @@
                                            │ verify token → lấy user_id
                                            │ kiểm tra notebook thuộc user
                                     ┌──────┴──────┐
-                                    │  PDF Parser  │  ← pdfplumber + PyMuPDF
-                                    └──────┬──────┘
+                                    │  PDF Parser  │  ← PyMuPDF (text extraction)
+                                    │              │  ← Gemini Vision (OCR fallback
+                                    └──────┬──────┘     cho scanned/garbled PDF)
                                            │ raw text + metadata (page numbers)
                                     ┌──────┴──────┐
                                     │   Chunker    │  ← LangChain RecursiveCharacterTextSplitter
                                     └──────┬──────┘   ← tiktoken cl100k_base tokenizer
                                            │ list of chunks
                                     ┌──────┴──────┐
-                                    │   Embedder   │  ← Google text-embedding-004
+                                    │   Embedder   │  ← Google gemini-embedding-001
                                     └──────┬──────┘
                                            │ vectors (768 dims)
                                     ┌──────┴──────┐
@@ -32,14 +33,14 @@
 Mỗi file xử lý độc lập — file lỗi không ảnh hưởng file khác trong cùng batch.
 ```
 
-### Query Flow (khi user hỏi)
+### Query Flow (khi user hỏi — hiện tại dùng non-streaming)
 ```
-[User hỏi] ──► [Frontend] ──► POST /api/chat/ask/stream + JWT token
+[User hỏi] ──► [Frontend] ──► POST /api/chat/ask + JWT token
                                          │ { notebook_id, question, chat_history }
                                      [FastAPI] verify token
                                          │
                                     ┌────┴────┐
-                                    │ Embedder│  ← Embed câu hỏi (text-embedding-004)
+                                    │ Embedder│  ← Embed câu hỏi (gemini-embedding-001)
                                     └────┬────┘
                                          │ query_vector (768 dims)
                                     ┌────┴──────────────────┐
@@ -51,11 +52,14 @@ Mỗi file xử lý độc lập — file lỗi không ảnh hưởng file khác
                                     └────┬──────────────┘
                                          │
                                     ┌────┴────────────┐
-                                    │  Gemini 2.5 Flash│  ← stream response
+                                    │  Gemini 2.5 Flash│  ← blocking response
                                     └────┬────────────┘
-                                         │ SSE tokens
-                                    [Frontend] hiển thị từng token
+                                         │ { answer, sources, tokens_used }
+                                    [Frontend] hiển thị kết quả
 ```
+
+> **Streaming (SSE):** Backend đã implement endpoint `POST /api/chat/ask/stream`,
+> trả về từng token qua Server-Sent Events. Frontend chưa tích hợp streaming — đang dùng non-streaming.
 
 ---
 
@@ -91,7 +95,7 @@ CREATE TABLE document_chunks (
   content     TEXT NOT NULL,
   page_number INTEGER,
   chunk_index INTEGER,
-  embedding   VECTOR(768),   -- text-embedding-004 = 768 dims
+  embedding   VECTOR(768),   -- gemini-embedding-001 = 768 dims
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -167,6 +171,7 @@ FE gọi POST /api/auth/logout
 ```
 chunk_size    = 500 tokens   (cl100k_base tokenizer — khớp với GPT-4 / text-embedding)
 chunk_overlap = 50 tokens    (giữ context tại ranh giới chunk)
+min_chunk_size = 30 tokens   (bỏ qua chunk quá ngắn: header, số trang, caption lẻ)
 Splitter: LangChain RecursiveCharacterTextSplitter
 ```
 
@@ -180,16 +185,18 @@ Trả lời câu hỏi dựa trên các đoạn trích sau từ tài liệu.
 Nếu không tìm thấy câu trả lời trong tài liệu, hãy nói rõ "Tôi không tìm thấy thông tin này trong tài liệu".
 Trả lời bằng ngôn ngữ của câu hỏi (tiếng Việt hoặc tiếng Anh).
 
---- Đoạn trích ---
+--- Đoạn trích từ tài liệu ---
 [Trang 3] {content}
 [Trang 5] {content}
 ...
 
 --- Lịch sử hội thoại ---
-{chat_history}   ← tối đa 10 turns gần nhất
+{chat_history}   ← tối đa 10 turns gần nhất (20 messages)
 
 --- Câu hỏi ---
 {question}
+
+--- Trả lời ---
 ```
 
 ---
