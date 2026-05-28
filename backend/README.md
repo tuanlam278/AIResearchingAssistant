@@ -192,10 +192,3 @@ Nếu token thiếu hoặc không hợp lệ, endpoint trả `401 Unauthorized` 
 Đặt license phù hợp với dự án (nếu cần) — ví dụ MIT / Apache-2.0.
 
 ---
-
-Nếu bạn muốn, tôi có thể:
-- Dịch README sang tiếng Anh.
-- Thêm phần hướng dẫn chạy trên Docker / production.
-- Thêm script migration SQL mẫu cho Supabase.
-
-Cảm ơn — README đã cập nhật tại [backend/README.md](backend/README.md).
