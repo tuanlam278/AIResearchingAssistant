@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,6 +14,11 @@ router = APIRouter(tags=["research-sessions"])
 
 class CreateResearchSessionRequest(BaseModel):
     selected_document_ids: List[str] = Field(..., min_length=1, max_length=50)
+
+
+class UpdateResearchSessionRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    is_starred: bool | None = None
 
 
 def _supabase_response_data(resp: Any) -> tuple[Any, Any]:
@@ -73,6 +79,7 @@ def _normalize_session(row: dict) -> dict:
         "selected_document_ids": row.get("selected_document_ids") or [],
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        "is_starred": row.get("is_starred", False),
     }
 
 
@@ -83,8 +90,9 @@ async def list_research_sessions(workspace_id: str, user: dict = Depends(get_cur
     try:
         resp = (
             supabase.table("research_sessions")
-            .select("id, notebook_id, title, selected_document_ids, created_at, updated_at")
+            .select("id, notebook_id, title, selected_document_ids, created_at, updated_at, is_starred")
             .eq("notebook_id", workspace_id)
+            .order("is_starred", desc=True)
             .order("created_at", desc=True)
             .execute()
         )
@@ -121,6 +129,7 @@ async def create_research_session(workspace_id: str, body: CreateResearchSession
             "notebook_id": workspace_id,
             "title": title,
             "selected_document_ids": selected_ids,
+            "is_starred": False,
         }).execute()
     except Exception as exc:
         logger.exception("Create research session failed")
@@ -129,6 +138,53 @@ async def create_research_session(workspace_id: str, body: CreateResearchSession
     if insert_error or not rows:
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tạo phiên nghiên cứu"})
     return {"success": True, "data": {"session": _normalize_session(rows[0])}}
+
+
+@router.patch("/research-sessions/{session_id}", response_model=dict)
+async def update_research_session(
+    session_id: str,
+    body: UpdateResearchSessionRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_id = _get_user_id(user)
+    _get_owned_session(session_id, user_id)
+
+    updates: dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if body.title is not None:
+        updates["title"] = body.title.strip()
+    if body.is_starred is not None:
+        updates["is_starred"] = body.is_starred
+
+    if len(updates) == 1:
+        raise HTTPException(status_code=400, detail={"code": "NO_UPDATES", "message": "Không có dữ liệu cập nhật"})
+
+    try:
+        resp = supabase.table("research_sessions").update(updates).eq("id", session_id).execute()
+    except Exception as exc:
+        logger.exception("Update research session failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi cập nhật lịch sử nghiên cứu"}) from exc
+    rows, error = _supabase_response_data(resp)
+    if error or not rows:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi cập nhật lịch sử nghiên cứu"})
+    return {"success": True, "data": {"session": _normalize_session(rows[0])}}
+
+
+@router.delete("/research-sessions/{session_id}", response_model=dict)
+async def delete_research_session(session_id: str, user: dict = Depends(get_current_user)):
+    user_id = _get_user_id(user)
+    _get_owned_session(session_id, user_id)
+    try:
+        supabase.table("research_session_messages").delete().eq("research_session_id", session_id).execute()
+        resp = supabase.table("research_sessions").delete().eq("id", session_id).execute()
+    except Exception as exc:
+        logger.exception("Delete research session failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi xoá lịch sử nghiên cứu"}) from exc
+    rows, error = _supabase_response_data(resp)
+    if error:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi xoá lịch sử nghiên cứu"})
+    if not rows:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy phiên nghiên cứu"})
+    return {"success": True, "data": {"session_id": session_id, "deleted": True}}
 
 
 @router.get("/research-sessions/{session_id}/messages", response_model=dict)
@@ -181,7 +237,7 @@ def _get_owned_session(session_id: str, user_id: str) -> dict:
     try:
         resp = (
             supabase.table("research_sessions")
-            .select("id, notebook_id, title, selected_document_ids, created_at, updated_at, notebooks!inner(user_id)")
+            .select("id, notebook_id, title, selected_document_ids, created_at, updated_at, is_starred, notebooks!inner(user_id)")
             .eq("id", session_id)
             .eq("notebooks.user_id", user_id)
             .execute()

@@ -6,6 +6,7 @@ create table if not exists public.research_sessions (
   notebook_id uuid not null references public.notebooks(id) on delete cascade,
   title text not null,
   selected_document_ids jsonb not null default '[]'::jsonb,
+  is_starred boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -21,6 +22,9 @@ create table if not exists public.research_session_messages (
 
 create index if not exists idx_research_sessions_notebook_id
   on public.research_sessions(notebook_id, created_at desc);
+
+create index if not exists idx_research_sessions_notebook_starred_created
+  on public.research_sessions(notebook_id, is_starred desc, created_at desc);
 
 create index if not exists idx_research_session_messages_session_id
   on public.research_session_messages(research_session_id, created_at asc);

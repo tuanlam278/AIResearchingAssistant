@@ -78,6 +78,7 @@ const STYLES = `
     white-space: nowrap;
   }
   .nb-create-btn:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(196,164,100,0.35); }
+  .nb-error { border: 1px solid rgba(224,120,120,0.2); background: rgba(224,120,120,0.08); color: #e07878; border-radius: 10px; padding: 10px 12px; font-size: 12px; margin-bottom: 14px; }
 
   /* Modal */
   .nb-modal-overlay {
@@ -166,12 +167,14 @@ const STYLES = `
   }
   .nb-card-meta { font-size: 12px; color: #5a5040; }
   .nb-card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-  .nb-delete-btn {
+  .nb-action-btn {
     width: 32px; height: 32px; border-radius: 8px; border: none;
     background: transparent; cursor: pointer; color: #4a4030;
     display: flex; align-items: center; justify-content: center;
     font-size: 15px; transition: color 0.2s, background 0.2s;
   }
+  .nb-action-btn:hover { color: #c4a464; background: rgba(196,164,100,0.08); }
+  .nb-action-btn.is-starred { color: #f3c85f; background: rgba(243,200,95,0.1); }
   .nb-delete-btn:hover { color: #e07878; background: rgba(200,80,80,0.08); }
   .nb-arrow { color: #3a3020; font-size: 18px; }
 
@@ -217,6 +220,7 @@ export default function NotebooksPage() {
   const [showModal, setShowModal] = useState(false);
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [pageError, setPageError] = useState('');
 
   const fetchNotebooks = async () => {
     if (!token) return;
@@ -243,6 +247,7 @@ export default function NotebooksPage() {
     const name = newName.trim();
     if (!name) return;
     setCreating(true);
+    setPageError('');
     try {
       const result = await api.createNotebook(name, token);
       setShowModal(false);
@@ -250,7 +255,7 @@ export default function NotebooksPage() {
       sessionStorage.setItem(`nb_name_${result.notebook_id}`, name); // ← thêm dòng này
       navigate(`/notebooks/${result.notebook_id}`);
     } catch {
-      alert('Tạo notebook thất bại, vui lòng thử lại.');
+      setPageError('Tạo notebook thất bại, vui lòng thử lại.');
     } finally {
       setCreating(false);
     }
@@ -259,13 +264,33 @@ export default function NotebooksPage() {
   const handleDelete = async (e, notebookId) => {
     e.stopPropagation();
     if (!window.confirm('Xóa notebook này sẽ xóa toàn bộ tài liệu bên trong. Tiếp tục?')) return;
+    setPageError('');
     try {
       await api.deleteNotebook(notebookId, token);
       setNotebooks(prev => prev.filter(n => n.notebook_id !== notebookId));
     } catch {
-      alert('Xóa thất bại!');
+      setPageError('Xóa notebook thất bại.');
     }
   };
+
+  const toggleNotebookStar = async (e, nb) => {
+    e.stopPropagation();
+    const previous = Boolean(nb.is_starred);
+    setNotebooks((prev) => prev.map((item) => (item.notebook_id === nb.notebook_id ? { ...item, is_starred: !previous } : item)));
+    try {
+      const result = await api.updateNotebook(nb.notebook_id, { is_starred: !previous }, token);
+      if (result?.notebook) {
+        setNotebooks((prev) => prev.map((item) => (item.notebook_id === nb.notebook_id ? result.notebook : item)));
+      }
+    } catch {
+      setNotebooks((prev) => prev.map((item) => (item.notebook_id === nb.notebook_id ? nb : item)));
+    }
+  };
+
+  const sortedNotebooks = [...notebooks].sort((a, b) => {
+    if (Boolean(a.is_starred) !== Boolean(b.is_starred)) return a.is_starred ? -1 : 1;
+    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+  });
 
   const openModal = () => { setNewName(''); setShowModal(true); };
 
@@ -298,6 +323,8 @@ export default function NotebooksPage() {
             </button>
           </div>
 
+          {pageError && <div className="nb-error">⚠ {pageError}</div>}
+
           {loading ? (
             <div className="nb-loading">
               <div className="nb-spinner" />
@@ -311,7 +338,7 @@ export default function NotebooksPage() {
             </div>
           ) : (
             <div className="nb-grid">
-              {notebooks.map(nb => (
+              {sortedNotebooks.map(nb => (
                 <div
                   key={nb.notebook_id}
                   className="nb-card"
@@ -331,7 +358,15 @@ export default function NotebooksPage() {
                   </div>
                   <div className="nb-card-actions">
                     <button
-                      className="nb-delete-btn"
+                      className={`nb-action-btn ${nb.is_starred ? 'is-starred' : ''}`}
+                      onClick={(e) => toggleNotebookStar(e, nb)}
+                      aria-label={nb.is_starred ? 'Bỏ đánh dấu notebook quan trọng' : 'Đánh dấu notebook quan trọng'}
+                      title={nb.is_starred ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
+                    >
+                      {nb.is_starred ? '★' : '☆'}
+                    </button>
+                    <button
+                      className="nb-action-btn nb-delete-btn"
                       onClick={(e) => handleDelete(e, nb.notebook_id)}
                       title="Xóa notebook"
                     >

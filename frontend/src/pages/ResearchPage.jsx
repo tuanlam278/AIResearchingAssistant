@@ -174,6 +174,14 @@ function NotesPanel({
   onSaveEdit,
   onDeleteNote,
   onCloseCitation,
+  selectedNote,
+  noteDetailMode,
+  noteDetailDraft,
+  onOpenNote,
+  onCloseNote,
+  onStartDetailEdit,
+  onNoteDetailDraftChange,
+  onSaveDetailEdit,
 }) {
   return (
     <div className="rp-notes-col">
@@ -201,7 +209,7 @@ function NotesPanel({
             const isEditing = editingNoteId === note.id;
 
             return (
-              <div key={note.id} className="rp-note-card">
+              <div key={note.id} className="rp-note-card" role="button" tabIndex={0} onClick={() => onOpenNote(note)} onKeyDown={(e) => { if (e.key === 'Enter') onOpenNote(note); }}>
                 <button
                   type="button"
                   className="rp-note-delete"
@@ -262,6 +270,72 @@ function NotesPanel({
           })
         )}
       </div>
+
+      {selectedNote && (
+        <div className="rp-note-modal-overlay" onClick={onCloseNote}>
+          <div className="rp-note-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="rp-note-modal-head">
+              <div>
+                <div className="rp-note-modal-kicker">Chi tiết ghi chú</div>
+                {noteDetailMode === 'edit' ? (
+                  <input
+                    className="rp-note-modal-title-input"
+                    value={noteDetailDraft.title}
+                    onChange={(e) => onNoteDetailDraftChange({ ...noteDetailDraft, title: e.target.value })}
+                    placeholder="Tiêu đề ghi chú"
+                  />
+                ) : (
+                  <h2>{selectedNote.title || 'Ghi chú mới'}</h2>
+                )}
+              </div>
+              <div className="rp-note-modal-actions">
+                {noteDetailMode !== 'edit' && (
+                  <>
+                    <button type="button" className="rp-note-modal-icon" onClick={onStartDetailEdit} aria-label="Chỉnh sửa ghi chú" title="Chỉnh sửa ghi chú">✎</button>
+                    <button type="button" className="rp-note-modal-icon danger" onClick={() => onDeleteNote(selectedNote.id)} aria-label="Xoá ghi chú" title="Xoá ghi chú">🗑</button>
+                  </>
+                )}
+                <button type="button" className="rp-note-modal-close" onClick={onCloseNote} aria-label="Đóng ghi chú">×</button>
+              </div>
+            </div>
+
+            {noteDetailMode === 'edit' ? (
+              <div className="rp-note-modal-edit">
+                <textarea
+                  value={noteDetailDraft.content}
+                  onChange={(e) => onNoteDetailDraftChange({ ...noteDetailDraft, content: e.target.value })}
+                  rows={12}
+                  placeholder="Nội dung ghi chú"
+                />
+                <div className="rp-note-modal-footer">
+                  <button type="button" className="rp-note-cancel" onClick={() => onOpenNote(selectedNote)}>Huỷ</button>
+                  <button type="button" className="rp-note-save" onClick={() => onSaveDetailEdit(selectedNote.id)}>Lưu</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="rp-note-modal-content">{selectedNote.content}</p>
+                {Array.isArray(selectedNote.citations) && selectedNote.citations.length > 0 && (
+                  <div className="rp-note-modal-sources">
+                    <h3>Nguồn trích dẫn</h3>
+                    {selectedNote.citations.map((citation, index) => (
+                      <div key={`${citation.document_title || 'source'}-${index}`} className="rp-note-modal-source">
+                        <strong>{citation.document_title || citation.filename || 'Tài liệu'}</strong>
+                        {(citation.page_start || citation.page) && <span>tr. {citation.page_start || citation.page}</span>}
+                        {(citation.snippet || citation.summary || citation.content) && <p>{citation.snippet || citation.summary || citation.content}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="rp-note-modal-meta">
+                  {selectedNote.created_at && <span>Tạo: {formatNoteTime(selectedNote.created_at)}</span>}
+                  {selectedNote.updated_at && <span>Cập nhật: {formatNoteTime(selectedNote.updated_at)}</span>}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -360,6 +434,9 @@ export default function ResearchPage() {
   const [loadingNotes, setLoadingNotes] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState(null);
   const [editDraft, setEditDraft] = useState({ title: "", content: "" });
+  const [selectedNote, setSelectedNote] = useState(null);
+  const [noteDetailMode, setNoteDetailMode] = useState('view');
+  const [noteDetailDraft, setNoteDetailDraft] = useState({ title: "", content: "" });
   const [savingNoteMessageId, setSavingNoteMessageId] = useState(null);
   const [savedMessageIds, setSavedMessageIds] = useState(() => new Set());
   const [suggestedQuestions, setSuggestedQuestions] = useState(() => location.state?.suggestedQuestions || []);
@@ -756,6 +833,8 @@ export default function ResearchPage() {
       const updatedNote = result?.note;
       if (!updatedNote) throw new Error("Không thể cập nhật ghi chú");
       setNotes((prev) => prev.map((note) => (note.id === noteId ? updatedNote : note)));
+      setSelectedNote((prev) => (prev?.id === noteId ? updatedNote : prev));
+      setNoteDetailMode('view');
       handleCancelEditNote();
       showToast("success", "Đã cập nhật ghi chú.");
     } catch (err) {
@@ -764,6 +843,7 @@ export default function ResearchPage() {
   };
 
   const handleDeleteNote = async (noteId) => {
+    if (!window.confirm('Bạn có chắc muốn xoá ghi chú này không?')) return;
     try {
       await api.deleteNote(noteId, token);
       const deletedNote = notes.find((note) => note.id === noteId);
@@ -776,9 +856,49 @@ export default function ResearchPage() {
         });
       }
       if (editingNoteId === noteId) handleCancelEditNote();
+      if (selectedNote?.id === noteId) setSelectedNote(null);
       showToast("success", "Đã xoá ghi chú.");
     } catch (err) {
       showToast("error", err.message || "Không thể xoá ghi chú.");
+    }
+  };
+
+  const handleOpenNote = (note) => {
+    setSelectedNote(note);
+    setNoteDetailMode('view');
+    setNoteDetailDraft({ title: note.title || '', content: note.content || '' });
+  };
+
+  const handleCloseNote = () => {
+    setSelectedNote(null);
+    setNoteDetailMode('view');
+  };
+
+  const handleStartDetailEdit = () => {
+    if (!selectedNote) return;
+    setNoteDetailDraft({ title: selectedNote.title || '', content: selectedNote.content || '' });
+    setNoteDetailMode('edit');
+  };
+
+  const handleSaveDetailEditNote = async (noteId) => {
+    const previous = notes.find((note) => note.id === noteId);
+    const title = noteDetailDraft.title.trim() || 'Ghi chú mới';
+    const content = noteDetailDraft.content.trim();
+    if (!content) {
+      showToast('error', 'Nội dung ghi chú không được để trống.');
+      return;
+    }
+    try {
+      const result = await api.updateNote(noteId, { title, content }, token);
+      const updatedNote = result?.note;
+      if (!updatedNote) throw new Error('Không thể cập nhật ghi chú');
+      setNotes((prev) => prev.map((note) => (note.id === noteId ? updatedNote : note)));
+      setSelectedNote(updatedNote);
+      setNoteDetailMode('view');
+      showToast('success', 'Đã cập nhật ghi chú.');
+    } catch (err) {
+      if (previous) setSelectedNote(previous);
+      showToast('error', err.message || 'Không thể cập nhật ghi chú.');
     }
   };
 
@@ -938,6 +1058,28 @@ export default function ResearchPage() {
         .rp-note-cancel, .rp-note-save { border: none; border-radius: 8px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
         .rp-note-cancel { background: rgba(255,255,255,0.06); color: #8a8070; }
         .rp-note-save { background: linear-gradient(135deg, #c4a464, #8a6a30); color: #1a1510; font-weight: 700; }
+        .rp-note-modal-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.68); display: flex; align-items: center; justify-content: center; padding: 24px; }
+        .rp-note-modal { width: min(720px, 100%); max-height: 88vh; overflow-y: auto; background: #1a1710; border: 1px solid rgba(255,255,255,0.1); border-radius: 18px; padding: 22px; box-shadow: 0 24px 80px rgba(0,0,0,0.45); }
+        .rp-note-modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; border-bottom: 1px solid rgba(255,255,255,0.07); padding-bottom: 14px; margin-bottom: 16px; }
+        .rp-note-modal-kicker { color: #c4a464; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; }
+        .rp-note-modal h2 { font-family: 'Lora', Georgia, serif; color: #e8e0d0; font-size: 20px; line-height: 1.35; margin: 0; }
+        .rp-note-modal-actions { display: flex; gap: 7px; flex-shrink: 0; }
+        .rp-note-modal-icon, .rp-note-modal-close { width: 32px; height: 32px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.09); background: rgba(255,255,255,0.04); color: #8a8070; cursor: pointer; transition: color .2s, border-color .2s, background .2s; }
+        .rp-note-modal-icon:hover { color: #c4a464; border-color: rgba(196,164,100,.35); background: rgba(196,164,100,.08); }
+        .rp-note-modal-icon.danger:hover { color: #e07878; border-color: rgba(224,120,120,.35); background: rgba(224,120,120,.1); }
+        .rp-note-modal-close:hover { color: #e8e0d0; background: rgba(255,255,255,.08); }
+        .rp-note-modal-content { white-space: pre-wrap; color: #c7bdad; line-height: 1.75; font-size: 14px; margin: 0 0 18px; }
+        .rp-note-modal-sources { display: grid; gap: 10px; margin-top: 16px; }
+        .rp-note-modal-sources h3 { color: #e8e0d0; font-size: 13px; margin: 0; }
+        .rp-note-modal-source { border: 1px solid rgba(255,255,255,.08); border-radius: 11px; padding: 10px; background: rgba(255,255,255,.03); color: #8a8070; font-size: 12px; }
+        .rp-note-modal-source strong { color: #c4a464; margin-right: 8px; }
+        .rp-note-modal-source p { margin: 6px 0 0; line-height: 1.55; }
+        .rp-note-modal-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; color: #5a5040; font-size: 11px; }
+        .rp-note-modal-meta span { border: 1px solid rgba(255,255,255,.07); border-radius: 99px; padding: 3px 8px; background: rgba(255,255,255,.035); }
+        .rp-note-modal-title-input, .rp-note-modal-edit textarea { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; background: rgba(15,13,10,0.45); color: #d4cfc8; padding: 10px 12px; font-family: 'DM Sans', sans-serif; outline: none; }
+        .rp-note-modal-title-input { font-family: 'Lora', Georgia, serif; font-size: 18px; }
+        .rp-note-modal-edit textarea { resize: vertical; line-height: 1.65; font-size: 13px; }
+        .rp-note-modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
         .rp-citation-detail { margin-bottom: 14px; border: 1px solid rgba(196,164,100,0.2); background: rgba(196,164,100,0.06); border-radius: 12px; padding: 12px; }
         .rp-citation-detail-head { display: flex; align-items: center; justify-content: space-between; color: #c4a464; font-size: 12px; font-weight: 700; margin-bottom: 7px; }
         .rp-citation-detail-head button { border: none; background: transparent; color: #8a8070; cursor: pointer; font-size: 18px; line-height: 1; }

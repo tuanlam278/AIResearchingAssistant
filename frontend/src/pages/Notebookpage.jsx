@@ -288,8 +288,22 @@ const STYLES = `
   .nbp-history-list { display: grid; gap: 10px; }
   .nbp-history-item { width: 100%; text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #d4cfc8; border-radius: 12px; padding: 12px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
   .nbp-history-item:hover { border-color: rgba(196,164,100,0.35); background: rgba(196,164,100,0.07); }
-  .nbp-history-title { display: block; font-size: 13px; line-height: 1.45; color: #e8e0d0; }
+  .nbp-history-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .nbp-history-title { display: block; flex: 1; font-size: 13px; line-height: 1.45; color: #e8e0d0; }
   .nbp-history-time { display: block; margin-top: 6px; color: #6a6050; font-size: 11px; }
+  .nbp-history-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .nbp-icon-btn { width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.035); color: #7a7060; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.15s; }
+  .nbp-icon-btn:hover { color: #c4a464; border-color: rgba(196,164,100,0.3); background: rgba(196,164,100,0.08); transform: translateY(-1px); }
+  .nbp-icon-btn.danger:hover { color: #e07878; border-color: rgba(224,120,120,0.35); background: rgba(224,120,120,0.1); }
+  .nbp-star-btn.is-starred { color: #f3c85f; border-color: rgba(243,200,95,0.35); background: rgba(243,200,95,0.1); }
+  .nbp-header-star { flex-shrink: 0; }
+  .nbp-history-edit { display: flex; flex-direction: column; gap: 8px; }
+  .nbp-history-edit input { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 9px; background: rgba(15,13,10,0.55); color: #d4cfc8; padding: 8px 10px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; }
+  .nbp-history-edit-actions { display: flex; justify-content: flex-end; gap: 7px; }
+  .nbp-mini-btn { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  .nbp-mini-btn.cancel { background: rgba(255,255,255,0.06); color: #8a8070; }
+  .nbp-mini-btn.save { background: linear-gradient(135deg, #c4a464, #8a6a30); color: #1a1510; font-weight: 700; }
+  .nbp-mini-btn:disabled { opacity: 0.45; cursor: not-allowed; }
   .nbp-doc-select { width: 18px; height: 18px; accent-color: #c4a464; flex-shrink: 0; }
   .nbp-select-all { border: 1px solid rgba(196,164,100,0.2); background: rgba(196,164,100,0.08); color: #c4a464; border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
   .nbp-selected-hint { margin-top: 10px; color: #8a8070; font-size: 12px; }
@@ -402,6 +416,7 @@ export default function NotebookPage() {
   const fileInputRef = useRef(null);
 
   const [notebookName, setNotebookName] = useState('Notebook');
+  const [notebookStarred, setNotebookStarred] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
 
@@ -418,6 +433,8 @@ export default function NotebookPage() {
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
   const [researchSessions, setResearchSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState(null);
+  const [sessionTitleDraft, setSessionTitleDraft] = useState('');
 
   const fetchDocuments = async () => {
     if (!token) return;
@@ -476,6 +493,21 @@ export default function NotebookPage() {
     }
   };
 
+  const fetchNotebookMeta = async () => {
+    if (!token) return;
+    try {
+      const result = await api.getNotebooks(token);
+      const current = (result.notebooks || []).find((nb) => nb.notebook_id === notebookId);
+      if (current) {
+        setNotebookName(current.name || 'Notebook');
+        setNotebookStarred(Boolean(current.is_starred));
+        sessionStorage.setItem(`nb_name_${notebookId}`, current.name || 'Notebook');
+      }
+    } catch (err) {
+      console.warn('Không thể tải metadata notebook', err);
+    }
+  };
+
   const goToChat = async (question = '') => {
     const validSelectedIds = selectedDocumentIds.filter((id) => documents.some((doc) => doc.doc_id === id));
     if (validSelectedIds.length === 0) {
@@ -517,6 +549,7 @@ export default function NotebookPage() {
     // Lấy tên notebook từ localStorage nếu có (được set ở NotebooksPage khi navigate)
     const saved = sessionStorage.getItem(`nb_name_${notebookId}`);
     if (saved) setNotebookName(saved);
+    fetchNotebookMeta();
     fetchDocuments();
     loadDocumentSummary(null, { generate: false });
     fetchResearchSessions();
@@ -576,12 +609,14 @@ export default function NotebookPage() {
       const nextDocuments = await fetchDocuments();
       if (uploadedIds.length > 0) {
         setSelectedDocumentIds((prev) => Array.from(new Set([...prev, ...uploadedIds])));
-        await loadDocumentSummary(nextDocuments?.map((doc) => doc.doc_id) || null, { generate: true });
-      } else {
-        setSummaryData({ documents: result.failed || [], overall_summary: '', overall_key_points: [], suggested_questions: [] });
+        const readyIds = (nextDocuments || []).filter((doc) => (doc.status || 'ready') === 'ready').map((doc) => doc.doc_id);
+        await loadDocumentSummary(readyIds, { generate: true });
+      }
+      if ((result.failed || []).length > 0) {
+        setUploadError('Upload tài liệu thất bại.');
       }
     } catch (err) {
-      setUploadError(err.message || 'Upload thất bại, vui lòng thử lại.');
+      setUploadError(err.message || 'Upload tài liệu thất bại.');
     } finally {
       setUploading(false); setProgress(0);
     }
@@ -608,21 +643,102 @@ export default function NotebookPage() {
       }
       await fetchResearchSessions();
     } catch {
-      alert('Xóa thất bại!');
+      setUploadError('Xóa tài liệu thất bại.');
     }
   };
 
-  const readyDocumentIds = new Set(documents.filter((doc) => (doc.status || 'ready') === 'ready').map((doc) => doc.doc_id));
+  const readyDocuments = documents.filter((doc) => (doc.status || 'ready') === 'ready');
+  const readyDocumentIds = new Set(readyDocuments.map((doc) => doc.doc_id));
   const canResearch = selectedDocumentIds.length > 0 && selectedDocumentIds.every((id) => readyDocumentIds.has(id));
-  const allReadySelected = documents.length > 0 && documents.every((doc) => selectedDocumentIds.includes(doc.doc_id));
+  const allReadySelected = readyDocuments.length > 0 && readyDocuments.every((doc) => selectedDocumentIds.includes(doc.doc_id));
   const selectedDocumentNames = documents.filter((doc) => selectedDocumentIds.includes(doc.doc_id)).map((doc) => doc.filename);
+  const readySummaryData = readyDocuments.length > 0 && summaryData
+    ? {
+      ...summaryData,
+      documents: (summaryData.documents || []).filter((doc) => readyDocumentIds.has(doc.doc_id || doc.id)),
+    }
+    : null;
+  const sortedResearchSessions = [...researchSessions].sort((a, b) => {
+    if (Boolean(a.is_starred) !== Boolean(b.is_starred)) return a.is_starred ? -1 : 1;
+    return new Date(b.created_at || b.updated_at || 0) - new Date(a.created_at || a.updated_at || 0);
+  });
 
   const toggleDocumentSelection = (docId) => {
     setSelectedDocumentIds((prev) => prev.includes(docId) ? prev.filter((id) => id !== docId) : [...prev, docId]);
   };
 
   const toggleSelectAll = () => {
-    setSelectedDocumentIds(allReadySelected ? [] : documents.filter((doc) => (doc.status || 'ready') === 'ready').map((doc) => doc.doc_id));
+    setSelectedDocumentIds(allReadySelected ? [] : readyDocuments.map((doc) => doc.doc_id));
+  };
+
+
+  const toggleNotebookStar = async () => {
+    const previous = notebookStarred;
+    setNotebookStarred(!previous);
+    try {
+      const result = await api.updateNotebook(notebookId, { is_starred: !previous }, token);
+      setNotebookStarred(Boolean(result?.notebook?.is_starred));
+    } catch (err) {
+      setNotebookStarred(previous);
+      setUploadError(err.message || 'Không thể cập nhật trạng thái ghim notebook.');
+    }
+  };
+
+  const updateSessionInList = (updatedSession) => {
+    setResearchSessions((prev) => prev.map((session) => (session.id === updatedSession.id ? updatedSession : session)));
+  };
+
+  const toggleSessionStar = async (e, session) => {
+    e.stopPropagation();
+    const previous = Boolean(session.is_starred);
+    updateSessionInList({ ...session, is_starred: !previous });
+    try {
+      const result = await api.updateResearchSession(session.id, { is_starred: !previous }, token);
+      if (result?.session) updateSessionInList(result.session);
+    } catch (err) {
+      updateSessionInList(session);
+      setUploadError(err.message || 'Không thể cập nhật trạng thái ghim lịch sử.');
+    }
+  };
+
+  const startEditSession = (e, session) => {
+    e.stopPropagation();
+    setEditingSessionId(session.id);
+    setSessionTitleDraft(session.title || '');
+  };
+
+  const cancelEditSession = (e) => {
+    e?.stopPropagation?.();
+    setEditingSessionId(null);
+    setSessionTitleDraft('');
+  };
+
+  const saveSessionTitle = async (e, session) => {
+    e.stopPropagation();
+    const title = sessionTitleDraft.trim();
+    if (!title) {
+      setUploadError('Tên lịch sử nghiên cứu không được để trống.');
+      return;
+    }
+    try {
+      const result = await api.updateResearchSession(session.id, { title }, token);
+      if (result?.session) updateSessionInList(result.session);
+      cancelEditSession(e);
+    } catch (err) {
+      setUploadError(err.message || 'Không thể đổi tên lịch sử nghiên cứu.');
+    }
+  };
+
+  const deleteResearchSession = async (e, session) => {
+    e.stopPropagation();
+    if (!window.confirm('Bạn có chắc muốn xoá lịch sử nghiên cứu này không?')) return;
+    try {
+      await api.deleteResearchSession(session.id, token);
+      setResearchSessions((prev) => prev.filter((item) => item.id !== session.id));
+      if (editingSessionId === session.id) cancelEditSession(e);
+    } catch (err) {
+      setUploadError(err.message || 'Không thể xoá lịch sử nghiên cứu.');
+    }
   };
 
   return (
@@ -636,12 +752,13 @@ export default function NotebookPage() {
           <div className="nbp-divider" />
           <h1 className="nbp-title">{notebookName}</h1>
           <button
-            className="nbp-research-btn"
-            disabled={!canResearch}
-            onClick={() => goToChat()}
-            title={canResearch ? `Nghiên cứu: ${selectedDocumentNames.join(', ')}` : 'Vui lòng tick ít nhất 1 tài liệu ready'}
+            type="button"
+            className={`nbp-icon-btn nbp-star-btn nbp-header-star ${notebookStarred ? 'is-starred' : ''}`}
+            onClick={toggleNotebookStar}
+            aria-label={notebookStarred ? 'Bỏ đánh dấu notebook quan trọng' : 'Đánh dấu notebook quan trọng'}
+            title={notebookStarred ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
           >
-            ✦ Bắt đầu nghiên cứu
+            {notebookStarred ? '★' : '☆'}
           </button>
         </header>
 
@@ -744,8 +861,8 @@ export default function NotebookPage() {
           </div>
 
           <DocumentSummaryPanel
-            summary={summaryData}
-            loading={summaryLoading}
+            summary={readySummaryData}
+            loading={summaryLoading && readyDocuments.length > 0}
             error={summaryError}
             selectedDocumentIds={selectedDocumentIds}
             canStartResearch={canResearch}
@@ -827,10 +944,46 @@ export default function NotebookPage() {
                 </div>
               ) : (
                 <div className="nbp-history-list">
-                  {researchSessions.map((session) => (
+                  {sortedResearchSessions.map((session) => (
                     <button key={session.id} className="nbp-history-item" onClick={() => openResearchSession(session)}>
-                      <span className="nbp-history-title">{session.title}</span>
-                      <span className="nbp-history-time">{new Date(session.updated_at || session.created_at).toLocaleString('vi-VN')}</span>
+                      {editingSessionId === session.id ? (
+                        <span className="nbp-history-edit" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            value={sessionTitleDraft}
+                            onChange={(e) => setSessionTitleDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') saveSessionTitle(e, session);
+                              if (e.key === 'Escape') cancelEditSession(e);
+                            }}
+                            autoFocus
+                            maxLength={200}
+                          />
+                          <span className="nbp-history-edit-actions">
+                            <button type="button" className="nbp-mini-btn cancel" onClick={cancelEditSession}>Huỷ</button>
+                            <button type="button" className="nbp-mini-btn save" onClick={(e) => saveSessionTitle(e, session)} disabled={!sessionTitleDraft.trim()}>Lưu</button>
+                          </span>
+                        </span>
+                      ) : (
+                        <>
+                          <span className="nbp-history-top">
+                            <span className="nbp-history-title">{session.title}</span>
+                            <span className="nbp-history-actions">
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                className={`nbp-icon-btn nbp-star-btn ${session.is_starred ? 'is-starred' : ''}`}
+                                onClick={(e) => toggleSessionStar(e, session)}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleSessionStar(e, session); }}
+                                aria-label={session.is_starred ? 'Bỏ đánh dấu lịch sử quan trọng' : 'Đánh dấu lịch sử quan trọng'}
+                                title={session.is_starred ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
+                              >{session.is_starred ? '★' : '☆'}</span>
+                              <span role="button" tabIndex={0} className="nbp-icon-btn" onClick={(e) => startEditSession(e, session)} aria-label="Sửa tên lịch sử" title="Sửa tên">✎</span>
+                              <span role="button" tabIndex={0} className="nbp-icon-btn danger" onClick={(e) => deleteResearchSession(e, session)} aria-label="Xoá lịch sử nghiên cứu" title="Xoá lịch sử">🗑</span>
+                            </span>
+                          </span>
+                          <span className="nbp-history-time">{new Date(session.updated_at || session.created_at).toLocaleString('vi-VN')}</span>
+                        </>
+                      )}
                     </button>
                   ))}
                 </div>

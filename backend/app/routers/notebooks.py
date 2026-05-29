@@ -2,7 +2,7 @@ import logging
 from typing import List, Any
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
 from app.services.pdf_parser import parse_pdf
@@ -44,10 +44,16 @@ class CreateNotebookRequest(BaseModel):
     name: str
 
 
+class UpdateNotebookRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    is_starred: bool | None = None
+
+
 class NotebookItem(BaseModel):
     notebook_id: str
     name: str
     created_at: str
+    is_starred: bool = False
 
 
 class NotebookListResponse(BaseModel):
@@ -92,6 +98,7 @@ async def create_notebook(
             "notebook_id": created["id"],
             "name": created["name"],
             "created_at": created["created_at"],
+            "is_starred": created.get("is_starred", False),
         },
     }
 
@@ -103,8 +110,8 @@ async def list_notebooks(user: dict = Depends(get_current_user)):
 
     try:
         resp = supabase.table("notebooks").select(
-            "id, name, created_at"
-        ).eq("user_id", user_id).order("created_at", desc=True).execute()
+            "id, name, created_at, is_starred"
+        ).eq("user_id", user_id).order("is_starred", desc=True).order("created_at", desc=True).execute()
     except Exception:
         logger.exception("Supabase select notebooks failed")
         raise HTTPException(
@@ -120,11 +127,69 @@ async def list_notebooks(user: dict = Depends(get_current_user)):
         )
 
     notebooks = [
-        {"notebook_id": row["id"], "name": row["name"], "created_at": row["created_at"]}
+        {"notebook_id": row["id"], "name": row["name"], "created_at": row["created_at"], "is_starred": row.get("is_starred", False)}
         for row in (data or [])
     ]
 
     return {"success": True, "data": {"notebooks": notebooks, "total": len(notebooks)}}
+
+
+@router.patch("/{notebook_id}", response_model=dict)
+async def update_notebook(
+    notebook_id: str,
+    body: UpdateNotebookRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Update mutable notebook metadata for the current user."""
+    user_id = _get_user_id(user)
+    updates: dict[str, Any] = {}
+    if body.name is not None:
+        updates["name"] = body.name.strip()
+    if body.is_starred is not None:
+        updates["is_starred"] = body.is_starred
+
+    if not updates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "NO_UPDATES", "message": "Không có dữ liệu cập nhật"},
+        )
+
+    try:
+        resp = supabase.table("notebooks").update(updates).match({
+            "id": notebook_id,
+            "user_id": user_id,
+        }).execute()
+    except Exception:
+        logger.exception("Supabase update notebook failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi cập nhật notebook"},
+        )
+
+    data, error = _supabase_response_data(resp)
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi cập nhật notebook"},
+        )
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy notebook"},
+        )
+
+    updated = data[0]
+    return {
+        "success": True,
+        "data": {
+            "notebook": {
+                "notebook_id": updated["id"],
+                "name": updated["name"],
+                "created_at": updated["created_at"],
+                "is_starred": updated.get("is_starred", False),
+            }
+        },
+    }
 
 
 @router.delete("/{notebook_id}", response_model=dict)

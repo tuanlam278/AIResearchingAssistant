@@ -99,6 +99,11 @@ export const api = {
   createNotebook: (name, token) =>
     unwrapRequest(() => axiosInstance.post("/api/notebooks", { name }, { headers: authHeader(token) })),
 
+  updateNotebook: (notebookId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.patch(`/api/notebooks/${notebookId}`, payload, { headers: authHeader(token) })
+    ),
+
   deleteNotebook: (notebookId, token) =>
     unwrapRequest(() => axiosInstance.delete(`/api/notebooks/${notebookId}`, { headers: authHeader(token) })),
 
@@ -177,6 +182,16 @@ export const api = {
         { selected_document_ids: selectedDocumentIds },
         { headers: authHeader(token) }
       )
+    ),
+
+  updateResearchSession: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.patch(`/api/research-sessions/${sessionId}`, payload, { headers: authHeader(token) })
+    ),
+
+  deleteResearchSession: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/research-sessions/${sessionId}`, { headers: authHeader(token) })
     ),
 
   getResearchSessionMessages: (sessionId, token) =>
