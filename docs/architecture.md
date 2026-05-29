@@ -171,6 +171,8 @@ CREATE TABLE notes (
   content           TEXT NOT NULL,
   citations         JSONB DEFAULT '[]'::jsonb,
   source_message_id TEXT,
+  note_type         TEXT DEFAULT 'text',
+  metadata          JSONB DEFAULT '{}'::jsonb,
   created_at        TIMESTAMPTZ DEFAULT NOW(),
   updated_at        TIMESTAMPTZ DEFAULT NOW()
 );

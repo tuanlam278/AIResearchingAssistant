@@ -17,12 +17,16 @@ class NoteCreateRequest(BaseModel):
     content: str = Field(..., min_length=1)
     citations: List[dict] = Field(default_factory=list)
     source_message_id: Optional[str] = None
+    note_type: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
 
 
 class NoteUpdateRequest(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     content: Optional[str] = Field(default=None, min_length=1)
     citations: Optional[List[dict]] = None
+    note_type: Optional[str] = None
+    metadata: Optional[dict] = None
 
 
 def _supabase_response_data(resp: Any) -> tuple[Any, Any]:
@@ -53,6 +57,8 @@ def _normalize_note(row: dict) -> dict:
         "content": row.get("content") or "",
         "citations": citations,
         "source_message_id": row.get("source_message_id"),
+        "note_type": row.get("note_type") or ("flashcards" if isinstance(row.get("metadata"), dict) and row.get("metadata", {}).get("flashcards") else "text"),
+        "metadata": row.get("metadata") or {},
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -88,14 +94,24 @@ def _ensure_workspace_owner(workspace_id: str, user_id: str) -> None:
 
 def _get_note_for_user(note_id: str, user_id: str) -> dict:
     try:
-        resp = (
-            supabase.table("notes")
-            .select("id, workspace_id, title, content, citations, source_message_id, created_at, updated_at, notebooks!inner(user_id)")
-            .eq("id", note_id)
-            .eq("notebooks.user_id", user_id)
-            .single()
-            .execute()
-        )
+        try:
+            resp = (
+                supabase.table("notes")
+                .select("id, workspace_id, title, content, citations, source_message_id, note_type, metadata, created_at, updated_at, notebooks!inner(user_id)")
+                .eq("id", note_id)
+                .eq("notebooks.user_id", user_id)
+                .single()
+                .execute()
+            )
+        except Exception:
+            resp = (
+                supabase.table("notes")
+                .select("id, workspace_id, title, content, citations, source_message_id, created_at, updated_at, notebooks!inner(user_id)")
+                .eq("id", note_id)
+                .eq("notebooks.user_id", user_id)
+                .single()
+                .execute()
+            )
     except Exception:
         logger.exception("Supabase note lookup failed")
         raise HTTPException(
@@ -104,6 +120,19 @@ def _get_note_for_user(note_id: str, user_id: str) -> dict:
         )
 
     data, error = _supabase_response_data(resp)
+    if error:
+        try:
+            fallback_resp = (
+                supabase.table("notes")
+                .select("id, workspace_id, title, content, citations, source_message_id, created_at, updated_at, notebooks!inner(user_id)")
+                .eq("id", note_id)
+                .eq("notebooks.user_id", user_id)
+                .single()
+                .execute()
+            )
+            data, error = _supabase_response_data(fallback_resp)
+        except Exception:
+            pass
     if error or not data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -123,11 +152,21 @@ async def list_workspace_notes(
     try:
         resp = (
             supabase.table("notes")
-            .select("id, workspace_id, title, content, citations, source_message_id, created_at, updated_at")
+            .select("id, workspace_id, title, content, citations, source_message_id, note_type, metadata, created_at, updated_at")
             .eq("workspace_id", workspace_id)
             .order("updated_at", desc=True)
             .execute()
         )
+        data, error = _supabase_response_data(resp)
+        if error:
+            resp = (
+                supabase.table("notes")
+                .select("id, workspace_id, title, content, citations, source_message_id, created_at, updated_at")
+                .eq("workspace_id", workspace_id)
+                .order("updated_at", desc=True)
+                .execute()
+            )
+            data, error = _supabase_response_data(resp)
     except Exception:
         logger.exception("Supabase list notes failed")
         raise HTTPException(
@@ -135,7 +174,6 @@ async def list_workspace_notes(
             detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi lấy danh sách ghi chú"},
         )
 
-    data, error = _supabase_response_data(resp)
     if error:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -162,11 +200,18 @@ async def create_workspace_note(
         "content": body.content.strip(),
         "citations": body.citations,
         "source_message_id": body.source_message_id,
+        "note_type": body.note_type or "text",
+        "metadata": body.metadata or {},
         "updated_at": now,
     }
 
     try:
-        resp = supabase.table("notes").insert(payload).execute()
+        try:
+            resp = supabase.table("notes").insert(payload).execute()
+        except Exception:
+            payload.pop("note_type", None)
+            payload.pop("metadata", None)
+            resp = supabase.table("notes").insert(payload).execute()
     except Exception:
         logger.exception("Supabase create note failed")
         raise HTTPException(
@@ -200,12 +245,21 @@ async def update_note(
         updates["content"] = body.content.strip()
     if body.citations is not None:
         updates["citations"] = body.citations
+    if body.note_type is not None:
+        updates["note_type"] = body.note_type
+    if body.metadata is not None:
+        updates["metadata"] = body.metadata
 
     if len(updates) == 1:
         return {"success": True, "data": {"note": _normalize_note(existing)}}
 
     try:
-        resp = supabase.table("notes").update(updates).eq("id", note_id).execute()
+        try:
+            resp = supabase.table("notes").update(updates).eq("id", note_id).execute()
+        except Exception:
+            updates.pop("note_type", None)
+            updates.pop("metadata", None)
+            resp = supabase.table("notes").update(updates).eq("id", note_id).execute()
     except Exception:
         logger.exception("Supabase update note failed")
         raise HTTPException(

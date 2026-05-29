@@ -4,7 +4,8 @@ from typing import List
 
 class Settings(BaseSettings):
     GOOGLE_API_KEY: str
-    GROQ_API_KEY: str
+    GROQ_API_KEY: str = ""
+    GROQ_FLASHCARD_MODEL: str = "llama-3.1-8b-instant"
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
     SUPABASE_ANON_KEY: str
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     # Retrieval
     TOP_K_CHUNKS: int = 5
     MIN_SIMILARITY: float = 0.5
+    RAG_RELEVANCE_THRESHOLD: float = 0.35
 
     # Limits
     MAX_UPLOAD_MB: int = 50

@@ -46,7 +46,7 @@ export default function DocumentUploader({ onSuccess, token }) {
       } else if (err.message === "FILE_TOO_LARGE") {
         setError("Dung lượng file vượt quá 20MB."); //
       } else if (err.message === "INVALID_FILE_TYPE") {
-        setError("Hệ thống chỉ chấp nhận định dạng file PDF."); //
+        setError("Hệ thống hỗ trợ PDF, DOCX, TXT, MD, DOCX, TXT và MD."); //
       } else {
         setError("Có lỗi xảy ra khi xử lý tài liệu. Vui lòng thử lại.");
       }
@@ -67,7 +67,7 @@ export default function DocumentUploader({ onSuccess, token }) {
       >
         <input
           ref={fileInputRef} type="file" className="hidden"
-          accept="application/pdf" onChange={handleFileChange} disabled={loading}
+          accept=".pdf,.docx,.doc,.txt,.md,.rtf" onChange={handleFileChange} disabled={loading}
         />
         {loading ? (
           <div className="flex flex-col items-center space-y-3 text-blue-600">
@@ -81,7 +81,7 @@ export default function DocumentUploader({ onSuccess, token }) {
               <p className="text-base font-medium text-gray-700">
                 <span className="text-blue-600">Click để upload</span> hoặc kéo thả file vào đây
               </p>
-              <p className="text-xs text-gray-500 mt-1">Chỉ hỗ trợ PDF (Tối đa 20MB)</p>
+              <p className="text-xs text-gray-500 mt-1">Chỉ hỗ trợ PDF, DOCX, TXT, MD (Tối đa 20MB)</p>
             </div>
           </div>
         )}

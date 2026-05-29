@@ -10,8 +10,8 @@ from app.db.supabase_client import supabase
 from app.dependencies import get_current_user
 from app.models.schemas import AskRequest
 from app.services.embedder import embed_query
-from app.services.llm import generate_answer, generate_answer_stream
-from app.services.retriever import retrieve_chunks
+from app.services.llm import generate_answer, generate_answer_stream, generate_suggested_prompts
+from app.services.retriever import OUT_OF_SCOPE_WARNING, retrieve_rag_context
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -95,6 +95,14 @@ def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _warning_for_scope(is_out_of_scope: bool) -> str | None:
+    return OUT_OF_SCOPE_WARNING if is_out_of_scope else None
+
+
+def _answer_already_has_warning(answer: str) -> bool:
+    return (answer or "").lstrip().startswith(OUT_OF_SCOPE_WARNING)
+
+
 def _fetch_document_titles(chunks: list[dict]) -> dict[str, str]:
     """Best-effort filename lookup for citation metadata."""
     doc_ids = sorted({str(c.get("doc_id")) for c in chunks if c.get("doc_id")})
@@ -165,18 +173,20 @@ async def ask(
         )
 
     # 2. Vector search theo notebook_id (tìm trên tất cả file trong notebook)
-    chunks = await retrieve_chunks(query_vector, request.notebook_id, selected_document_ids)
-    if not chunks:
-        raise HTTPException(
-            status_code=404,
-            detail=_make_error("DOC_NOT_FOUND", "Không tìm thấy tài liệu hoặc notebook chưa có dữ liệu"),
-        )
+    retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids)
+    chunks = retrieval.chunks
+    warning = _warning_for_scope(retrieval.is_out_of_scope)
 
     citations = _build_citations(chunks)
 
     # 3. Generate answer
     try:
-        answer = await generate_answer(request.question, chunks, _sanitize_history(request.chat_history))
+        answer = await generate_answer(
+            request.question,
+            chunks,
+            _sanitize_history(request.chat_history),
+            allow_general_answer=retrieval.is_out_of_scope,
+        )
     except Exception as e:
         print(f"[LLM ERROR] {type(e).__name__}: {e}")
         raise HTTPException(
@@ -184,14 +194,21 @@ async def ask(
             detail=_make_error("LLM_FAILED", "Lỗi khi gọi LLM"),
         )
 
-    _persist_session_messages(request.research_session_id, request.question, answer["text"], citations)
+    answer_text = answer["text"]
+    if warning and _answer_already_has_warning(answer_text):
+        warning = None
+    suggested_prompts = generate_suggested_prompts(request.question, answer_text, chunks)
+    _persist_session_messages(request.research_session_id, request.question, answer_text, citations)
 
     return {
         "success": True,
         "data": {
-            "answer": answer["text"],
+            "warning": warning,
+            "message": {"role": "assistant", "content": answer_text, "citations": citations},
+            "answer": answer_text,
             "sources": citations,
             "citations": citations,
+            "suggested_prompts": suggested_prompts,
             "tokens_used": answer.get("tokens_used"),
         },
     }
@@ -217,24 +234,32 @@ async def ask_stream(
                 return
 
             yield _sse({"type": "status", "status": "retrieving", "message": "Đang tìm đoạn liên quan..."})
-            chunks = await retrieve_chunks(query_vector, request.notebook_id, selected_document_ids)
-            if not chunks:
-                yield _sse({"type": "error", "code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu trong notebook"})
-                return
+            retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids)
+            chunks = retrieval.chunks
+            warning = _warning_for_scope(retrieval.is_out_of_scope)
 
             citations = _build_citations(chunks)
             yield _sse({"type": "sources", "sources": citations, "citations": citations})
+            if warning:
+                yield _sse({"type": "warning", "warning": warning, "message": warning})
             yield _sse({"type": "status", "status": "generating", "message": "Đang tạo câu trả lời..."})
 
             full_answer = ""
             async for token in generate_answer_stream(
-                request.question, chunks, _sanitize_history(request.chat_history)
+                request.question,
+                chunks,
+                _sanitize_history(request.chat_history),
+                allow_general_answer=retrieval.is_out_of_scope,
             ):
                 full_answer += token
                 yield _sse({"type": "token", "content": token})
 
+            if warning and _answer_already_has_warning(full_answer):
+                warning = None
+            suggested_prompts = generate_suggested_prompts(request.question, full_answer, chunks)
             _persist_session_messages(request.research_session_id, request.question, full_answer if "full_answer" in locals() else "", citations)
-            yield _sse({"type": "done"})
+            yield _sse({"type": "suggested_prompts", "suggested_prompts": suggested_prompts})
+            yield _sse({"type": "done", "warning": warning, "suggested_prompts": suggested_prompts})
 
         except asyncio.CancelledError:
             logger.info("Chat stream cancelled by client disconnect")

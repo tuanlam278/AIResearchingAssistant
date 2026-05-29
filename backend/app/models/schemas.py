@@ -95,6 +95,7 @@ class ChatMessage(BaseModel):
     content: str
     id: Optional[str] = None
     citations: Optional[List[dict[str, Any]]] = None
+    warning: Optional[str] = None
     created_at: Optional[datetime] = None
 
 
@@ -124,6 +125,10 @@ class SourceChunk(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: List[SourceChunk]
+    warning: Optional[str] = None
+    message: Optional[ChatMessage] = None
+    citations: List[SourceChunk] = Field(default_factory=list)
+    suggested_prompts: List[str] = Field(default_factory=list)
     tokens_used: Optional[int] = None
 
 

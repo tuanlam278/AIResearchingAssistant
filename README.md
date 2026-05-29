@@ -64,6 +64,12 @@ npm run dev
 
 1. Đăng ký / Đăng nhập
 2. Tạo **Notebook** (nhóm tài liệu theo chủ đề)
-3. Upload **nhiều PDF** vào notebook
+3. Upload **nhiều PDF/DOCX/TXT/MD** vào notebook
 4. Đặt câu hỏi — hệ thống tìm kiếm trên **toàn bộ tài liệu trong notebook**
 5. Nhận câu trả lời kèm nguồn trích dẫn
+
+### Recent feature additions
+
+- Upload supports PDF, DOCX, TXT and MD for RAG indexing. Legacy `.doc` and `.rtf` uploads are rejected with clear conversion guidance.
+- Research sessions can be exported as DOCX via `GET /api/research-sessions/{session_id}/export.docx`.
+- Flashcards are generated with Groq through `POST /api/research-sessions/{session_id}/flashcards/generate` and require `GROQ_API_KEY` plus optional `GROQ_FLASHCARD_MODEL`.

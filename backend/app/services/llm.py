@@ -27,6 +27,8 @@ def _build_messages(
     question: str,
     chunks: List[dict],
     chat_history: List[ChatMessage],
+    *,
+    allow_general_answer: bool = False,
 ) -> list:
     """
     Xây dựng mảng messages array theo định dạng OpenAI-compatible phục vụ cho Groq API.
@@ -55,7 +57,9 @@ def _build_messages(
     base_system_prompt = (
         "Bạn là trợ lý nghiên cứu AI, giúp người dùng hiểu tài liệu học thuật.\n"
         "Trả lời câu hỏi dựa trên các đoạn trích sau từ tài liệu.\n"
-        "Nếu không tìm thấy câu trả lời trong tài liệu, hãy nói rõ "
+        "Nếu câu hỏi đi xa khỏi tài liệu nhưng hệ thống đã bật chế độ trả lời mở rộng, "
+        "hãy trả lời bằng kiến thức chung một cách thận trọng và không bịa trích dẫn.\n"
+        "Nếu không tìm thấy câu trả lời trong tài liệu và không đủ kiến thức chung, hãy nói rõ "
         '"Tôi không tìm thấy thông tin này trong tài liệu".\n'
         "Trả lời bằng ngôn ngữ của câu hỏi (tiếng Việt hoặc tiếng Anh).\n"
         "Khi dùng thông tin từ đoạn trích, hãy trích dẫn bằng chỉ số nguồn dạng [1], [2] ngay sau ý liên quan.\n\n"
@@ -87,6 +91,13 @@ def _build_messages(
 
     # Ghép chunks vào system prompt
     context_str = "\n\n".join(context_parts)
+    if allow_general_answer:
+        base_system_prompt += (
+            "\nLưu ý: retrieval đánh dấu câu hỏi có thể ngoài phạm vi tài liệu. "
+            "Vẫn trả lời hữu ích bằng kiến thức chung khi cần, nhưng phân biệt rõ phần dựa trên tài liệu và phần suy luận chung.\n"
+        )
+    if not context_str:
+        context_str = "Không có đoạn trích đủ liên quan từ tài liệu đã chọn."
     full_system_prompt = base_system_prompt + context_str
     messages = [{"role": "system", "content": full_system_prompt}]
 
@@ -119,6 +130,8 @@ async def generate_answer(
     question: str,
     chunks: List[dict],
     chat_history: List[ChatMessage],
+    *,
+    allow_general_answer: bool = False,
 ) -> dict:
     """
     Non-streaming generation. Dùng cho POST /api/chat/ask.
@@ -129,7 +142,7 @@ async def generate_answer(
     Raises:
         RuntimeError: Khi Groq API thất bại.
     """
-    messages = _build_messages(question, chunks, chat_history)
+    messages = _build_messages(question, chunks, chat_history, allow_general_answer=allow_general_answer)
     try:
         response = await client.chat.completions.create(
             model=GROQ_MODEL,
@@ -150,6 +163,8 @@ async def generate_answer_stream(
     question: str,
     chunks: List[dict],
     chat_history: List[ChatMessage],
+    *,
+    allow_general_answer: bool = False,
 ) -> AsyncGenerator[str, None]:
     """
     Streaming generation. Dùng cho POST /api/chat/ask/stream.
@@ -162,7 +177,7 @@ async def generate_answer_stream(
     Raises:
         RuntimeError: Khi Groq API thất bại.
     """
-    messages = _build_messages(question, chunks, chat_history)
+    messages = _build_messages(question, chunks, chat_history, allow_general_answer=allow_general_answer)
     try:
         stream = await client.chat.completions.create(
             model=GROQ_MODEL,
@@ -176,6 +191,50 @@ async def generate_answer_stream(
     except Exception as e:
         logger.error(f"Groq API error (stream): {e}")
         raise RuntimeError(f"LLM_FAILED: {e}") from e
+
+
+def generate_suggested_prompts(question: str = "", answer: str = "", chunks: List[dict] | None = None) -> list[str]:
+    """Cheap contextual follow-up suggestions without an extra LLM call."""
+    chunks = chunks or []
+    text_seed = " ".join(
+        part.strip()
+        for part in [question, answer[:500], " ".join((chunk.get("section") or "") for chunk in chunks[:3])]
+        if part and part.strip()
+    )
+    has_compare = any(word in (question or "").lower() for word in ["so sánh", "compare", "khác nhau", "giống nhau"])
+    has_terms = any(word in (question or "").lower() for word in ["thuật ngữ", "khái niệm", "term", "concept"])
+
+    if has_compare:
+        candidates = [
+            "Tóm tắt điểm khác biệt quan trọng nhất",
+            "Lập bảng so sánh ngắn gọn hơn",
+            "Các điểm giống nhau ảnh hưởng gì đến kết luận?",
+        ]
+    elif has_terms:
+        candidates = [
+            "Cho ví dụ dễ hiểu cho từng thuật ngữ",
+            "Thuật ngữ nào quan trọng nhất trong tài liệu?",
+            "Tạo flashcards cho các khái niệm này",
+        ]
+    elif text_seed:
+        candidates = [
+            "Tóm tắt ý chính của phần vừa trả lời",
+            "Giải thích sâu hơn bằng ví dụ cụ thể",
+            "Tạo câu hỏi ôn tập từ nội dung trên",
+        ]
+    else:
+        candidates = [
+            "Tóm tắt ý chính của tài liệu này",
+            "Giải thích thuật ngữ quan trọng trong tài liệu",
+            "Tạo câu hỏi ôn tập từ nội dung trên",
+        ]
+
+    cleaned = []
+    for prompt in candidates:
+        prompt = " ".join(prompt.split())[:120]
+        if prompt and prompt not in cleaned:
+            cleaned.append(prompt)
+    return cleaned[:3]
 
 
 def _extract_json_object(text: str) -> dict:

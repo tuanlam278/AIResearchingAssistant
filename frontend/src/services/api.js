@@ -71,8 +71,14 @@ async function readSseStream(response, callbacks = {}) {
         const event = JSON.parse(dataLine.slice(6));
         if (event.type === "status") callbacks.onStatus?.(event.status, event.message);
         if (event.type === "sources") callbacks.onSources?.(event.sources || event.citations || [], event.citations || event.sources || []);
+        if (event.type === "warning") callbacks.onWarning?.(event.warning || event.message || "");
+        if (event.type === "suggested_prompts") callbacks.onSuggestedPrompts?.(event.suggested_prompts || []);
         if (event.type === "token") callbacks.onToken?.(event.content || "");
-        if (event.type === "done") callbacks.onDone?.(event);
+        if (event.type === "done") {
+          if (event.warning) callbacks.onWarning?.(event.warning);
+          if (event.suggested_prompts) callbacks.onSuggestedPrompts?.(event.suggested_prompts || []);
+          callbacks.onDone?.(event);
+        }
         if (event.type === "error") callbacks.onError?.(event.message, event);
       } catch (err) {
         console.warn("Không parse được SSE event", err);
@@ -202,6 +208,33 @@ export const api = {
   clearResearchSessionMessages: (sessionId, token) =>
     unwrapRequest(() =>
       axiosInstance.delete(`/api/research-sessions/${sessionId}/messages`, { headers: authHeader(token) })
+    ),
+
+  exportResearchSessionDocx: async (sessionId, token) => {
+    try {
+      const response = await axiosInstance.get(`/api/research-sessions/${sessionId}/export.docx`, {
+        headers: authHeader(token),
+        responseType: "blob",
+      });
+      return response;
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
+
+  generateFlashcards: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/research-sessions/${sessionId}/flashcards/generate`, payload, { headers: authHeader(token) })
+    ),
+
+  generateQuiz: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/research-sessions/${sessionId}/quizzes/generate`, payload, { headers: authHeader(token) })
+    ),
+
+  generateTest: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/research-sessions/${sessionId}/tests/generate`, payload, { headers: authHeader(token) })
     ),
 
   // ── CHAT ─────────────────────────────────────────────────────────────────

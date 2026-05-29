@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext';
 
 const MAX_UPLOAD_MB = Number(import.meta.env.VITE_MAX_UPLOAD_MB || 50);
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+const SUPPORTED_UPLOAD_EXTENSIONS = new Set(["pdf", "docx", "doc", "txt", "md", "rtf"]);
+const SUPPORTED_UPLOAD_ACCEPT = ".pdf,.docx,.doc,.txt,.md,.rtf";
 
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap');
@@ -283,21 +285,21 @@ const STYLES = `
   }
 
   .nbp-content { max-width: 1160px; }
-  .nbp-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
-  .nbp-history-panel { position: sticky; top: 82px; }
-  .nbp-history-list { display: grid; gap: 10px; }
-  .nbp-history-item { width: 100%; text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #d4cfc8; border-radius: 12px; padding: 12px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+  .nbp-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 320px); gap: 20px; align-items: start; min-width: 0; }
+  .nbp-history-panel { position: sticky; top: 82px; max-width: 100%; min-width: 0; overflow-x: hidden; }
+  .nbp-history-list { display: grid; gap: 10px; max-width: 100%; min-width: 0; overflow-x: hidden; }
+  .nbp-history-item { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #d4cfc8; border-radius: 12px; padding: 12px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
   .nbp-history-item:hover { border-color: rgba(196,164,100,0.35); background: rgba(196,164,100,0.07); }
-  .nbp-history-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-  .nbp-history-title { display: block; flex: 1; font-size: 13px; line-height: 1.45; color: #e8e0d0; }
-  .nbp-history-time { display: block; margin-top: 6px; color: #6a6050; font-size: 11px; }
-  .nbp-history-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .nbp-history-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; max-width: 100%; min-width: 0; }
+  .nbp-history-title { display: -webkit-box; flex: 1; min-width: 0; font-size: 13px; line-height: 1.45; color: #e8e0d0; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .nbp-history-time { display: block; margin-top: 6px; color: #6a6050; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nbp-history-actions { display: flex; gap: 4px; flex-shrink: 0; min-width: max-content; }
   .nbp-icon-btn { width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.035); color: #7a7060; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: color 0.2s, background 0.2s, border-color 0.2s, transform 0.15s; }
   .nbp-icon-btn:hover { color: #c4a464; border-color: rgba(196,164,100,0.3); background: rgba(196,164,100,0.08); transform: translateY(-1px); }
   .nbp-icon-btn.danger:hover { color: #e07878; border-color: rgba(224,120,120,0.35); background: rgba(224,120,120,0.1); }
   .nbp-star-btn.is-starred { color: #f3c85f; border-color: rgba(243,200,95,0.35); background: rgba(243,200,95,0.1); }
   .nbp-header-star { flex-shrink: 0; }
-  .nbp-history-edit { display: flex; flex-direction: column; gap: 8px; }
+  .nbp-history-edit { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 100%; }
   .nbp-history-edit input { width: 100%; border: 1px solid rgba(255,255,255,0.09); border-radius: 9px; background: rgba(15,13,10,0.55); color: #d4cfc8; padding: 8px 10px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; }
   .nbp-history-edit-actions { display: flex; justify-content: flex-end; gap: 7px; }
   .nbp-mini-btn { border: none; border-radius: 8px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
@@ -569,19 +571,22 @@ export default function NotebookPage() {
 
   const addFiles = (newFiles) => {
     setUploadResult(null); setUploadError('');
-    const pdfs = newFiles.filter(f => f.type === 'application/pdf');
-    const invalid = newFiles.length - pdfs.length;
-    const tooLarge = pdfs.filter(f => f.size > MAX_UPLOAD_BYTES);
-    const validPdfs = pdfs.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    const supported = newFiles.filter((file) => {
+      const extension = (file.name.split('.').pop() || '').toLowerCase();
+      return SUPPORTED_UPLOAD_EXTENSIONS.has(extension);
+    });
+    const invalid = newFiles.length - supported.length;
+    const tooLarge = supported.filter(f => f.size > MAX_UPLOAD_BYTES);
+    const validFiles = supported.filter(f => f.size <= MAX_UPLOAD_BYTES);
     const existingNames = new Set(documents.map((doc) => normalizeFilename(doc.filename)));
     const messages = [];
-    if (invalid > 0) messages.push(`${invalid} file không phải PDF đã bị bỏ qua.`);
+    if (invalid > 0) messages.push(`${invalid} file không được hỗ trợ đã bị bỏ qua. Hỗ trợ PDF, DOCX, TXT, MD.`);
     if (tooLarge.length > 0) messages.push(`${tooLarge.length} file vượt quá ${MAX_UPLOAD_MB}MB đã bị bỏ qua.`);
     if (messages.length > 0) setUploadError(messages.join(' '));
 
     setSelectedFiles(prev => {
       const existing = new Set(prev.map(f => normalizeFilename(f.name)));
-      const added = validPdfs.filter(f => {
+      const added = validFiles.filter(f => {
         const normalized = normalizeFilename(f.name);
         if (existingNames.has(normalized)) {
           messages.push('Tài liệu đã tồn tại trong notebook.');
@@ -613,7 +618,8 @@ export default function NotebookPage() {
         await loadDocumentSummary(readyIds, { generate: true });
       }
       if ((result.failed || []).length > 0) {
-        setUploadError('Upload tài liệu thất bại.');
+        const failedMessages = result.failed.map((item) => item.message || item.error || 'Upload tài liệu thất bại.');
+        setUploadError(Array.from(new Set(failedMessages)).join(' '));
       }
     } catch (err) {
       setUploadError(err.message || 'Upload tài liệu thất bại.');
@@ -781,7 +787,7 @@ export default function NotebookPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/pdf"
+                accept={SUPPORTED_UPLOAD_ACCEPT}
                 multiple
                 style={{ display: 'none' }}
                 onChange={handleFileInput}
@@ -798,9 +804,9 @@ export default function NotebookPage() {
                 <>
                   <div className="nbp-dropzone-icon">📄</div>
                   <p className="nbp-dropzone-text">
-                    <span>Chọn file</span> hoặc kéo thả PDF vào đây
+                    <span>Chọn file</span> hoặc kéo thả tài liệu vào đây
                   </p>
-                  <p className="nbp-dropzone-hint">Hỗ trợ nhiều file · PDF · Tối đa {MAX_UPLOAD_MB}MB/file</p>
+                  <p className="nbp-dropzone-hint">Hỗ trợ nhiều file · PDF, DOCX, TXT, MD · Tối đa {MAX_UPLOAD_MB}MB/file</p>
                 </>
               )}
             </div>
@@ -892,7 +898,7 @@ export default function NotebookPage() {
               <div className="nbp-empty">
                 <div className="nbp-empty-icon">📚</div>
                 <p className="nbp-empty-text">Chưa có tài liệu nào.</p>
-                <p className="nbp-empty-sub">Upload PDF ở trên để bắt đầu.</p>
+                <p className="nbp-empty-sub">Upload PDF, DOCX, TXT hoặc MD ở trên để bắt đầu.</p>
               </div>
             ) : (
               documents.map(doc => (
@@ -909,8 +915,9 @@ export default function NotebookPage() {
                     <p className="nbp-doc-name">{doc.filename}</p>
                     <div className="nbp-doc-tags">
                       {[
-                        `${doc.page_count} trang`,
+                        `${doc.page_count || 1} trang`,
                         `${doc.chunk_count} chunks`,
+                        (doc.file_type || doc.filename?.split('.').pop() || 'file').toUpperCase(),
                         new Date(doc.created_at).toLocaleDateString('vi-VN'),
                       ].map((tag, i) => (
                         <span key={i} className="nbp-doc-tag">{tag}</span>

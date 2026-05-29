@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
-from app.services.pdf_parser import parse_pdf
+from app.services.document_parser import (
+    EmptyDocumentText,
+    UnsupportedDocumentType,
+    get_file_type,
+    parse_document,
+)
 from app.services.chunker import chunk_text
 from app.services.embedder import embed_chunks
 from app.db.supabase_client import supabase
@@ -231,7 +236,7 @@ async def upload_documents(
     user: dict = Depends(get_current_user),
 ):
     """
-    Upload nhiều file PDF vào một notebook.
+    Upload nhiều file tài liệu nghiên cứu vào một notebook.
     Mỗi file được parse → chunk → embed → lưu vào Supabase độc lập.
     Trả về danh sách kết quả của từng file.
     """
@@ -304,15 +309,9 @@ async def upload_documents(
 
 
 async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int) -> dict:
-    """Xử lý 1 file PDF: validate → parse → chunk → embed → insert Supabase."""
+    """Xử lý 1 file: validate → parse → chunk → embed → insert Supabase."""
 
-    # Validate file type
-    if file.content_type != "application/pdf":
-        return {
-            "filename": file.filename,
-            "status": "error",
-            "error": "INVALID_FILE_TYPE",
-        }
+    file_type = get_file_type(file.filename)
 
     # Đọc nội dung
     try:
@@ -329,30 +328,45 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             "message": f"File quá lớn. Vui lòng chọn file dưới {max_size_bytes // 1024 // 1024}MB.",
         }
 
-    # Parse PDF
+    # Parse document
     try:
-        pages = await parse_pdf(contents)
+        pages, file_type = await parse_document(contents, file.filename)
         page_count = len(pages)
+    except UnsupportedDocumentType as exc:
+        return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "INVALID_FILE_TYPE", "message": str(exc)}
+    except EmptyDocumentText as exc:
+        return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": str(exc)}
     except Exception:
-        logger.exception(f"PDF parse failed: {file.filename}")
-        return {"filename": file.filename, "status": "error", "error": "PARSE_FAILED"}
+        logger.exception(f"Document parse failed: {file.filename}")
+        return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
 
     # Chunk
     try:
         chunks = chunk_text(pages)
         chunk_count = len(chunks)
+        if chunk_count == 0:
+            return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
     except Exception:
         logger.exception(f"Chunking failed: {file.filename}")
         return {"filename": file.filename, "status": "error", "error": "CHUNK_FAILED"}
 
     # Insert document metadata
     try:
-        resp = supabase.table("documents").insert({
+        document_payload = {
             "notebook_id": notebook_id,
             "filename": file.filename,
+            "file_type": file_type,
             "page_count": page_count,
             "chunk_count": chunk_count,
-        }).execute()
+            "status": "ready",
+        }
+        try:
+            resp = supabase.table("documents").insert(document_payload).execute()
+        except Exception:
+            # Backward-compatible fallback for databases that have not added file_type/status yet.
+            document_payload.pop("file_type", None)
+            document_payload.pop("status", None)
+            resp = supabase.table("documents").insert(document_payload).execute()
     except Exception:
         logger.exception(f"Insert document failed: {file.filename}")
         return {"filename": file.filename, "status": "error", "error": "DB_INSERT_FAILED"}
@@ -396,6 +410,8 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
     return {
         "filename": file.filename,
         "doc_id": doc_id,
+        "id": doc_id,
+        "file_type": file_type,
         "page_count": page_count,
         "chunk_count": chunk_count,
         "created_at": created_at,
@@ -431,9 +447,14 @@ async def list_documents_in_notebook(
         )
 
     try:
-        resp = supabase.table("documents").select(
-            "id, filename, page_count, chunk_count, created_at"
-        ).eq("notebook_id", notebook_id).order("created_at", desc=False).execute()
+        try:
+            resp = supabase.table("documents").select(
+                "id, filename, file_type, status, page_count, chunk_count, created_at"
+            ).eq("notebook_id", notebook_id).order("created_at", desc=False).execute()
+        except Exception:
+            resp = supabase.table("documents").select(
+                "id, filename, page_count, chunk_count, created_at"
+            ).eq("notebook_id", notebook_id).order("created_at", desc=False).execute()
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -450,7 +471,10 @@ async def list_documents_in_notebook(
     documents = [
         {
             "doc_id": row["id"],
+            "id": row["id"],
             "filename": row["filename"],
+            "file_type": row.get("file_type") or get_file_type(row.get("filename")),
+            "status": row.get("status") or "ready",
             "page_count": row["page_count"],
             "chunk_count": row["chunk_count"],
             "created_at": row["created_at"],

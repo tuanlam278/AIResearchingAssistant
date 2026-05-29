@@ -1,4 +1,20 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+
+const FALLBACK_PROMPTS = [
+  "Tóm tắt ý chính của tài liệu này",
+  "Giải thích thuật ngữ quan trọng trong tài liệu",
+  "Tạo câu hỏi ôn tập từ nội dung trên",
+];
+
+function cleanPrompts(prompts = []) {
+  const source = Array.isArray(prompts) && prompts.length ? prompts : FALLBACK_PROMPTS;
+  return source
+    .map((prompt) => String(prompt || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((prompt, index, arr) => arr.indexOf(prompt) === index)
+    .slice(0, 3)
+    .map((prompt) => (prompt.length > 96 ? `${prompt.slice(0, 93)}...` : prompt));
+}
 
 export default function ChatBox({
   messages,
@@ -8,9 +24,12 @@ export default function ChatBox({
   loading,
   error,
   loadingMessage,
+  suggestedPrompts = FALLBACK_PROMPTS,
+  onSuggestedPromptClick,
   placeholder = "Đặt câu hỏi về tài liệu...",
 }) {
   const bottomRef = useRef(null);
+  const visiblePrompts = useMemo(() => cleanPrompts(suggestedPrompts), [suggestedPrompts]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -23,9 +42,15 @@ export default function ChatBox({
     }
   };
 
+  const handlePromptClick = (prompt) => {
+    if (onSuggestedPromptClick) onSuggestedPromptClick(prompt);
+    else onChange?.(prompt);
+  };
+
   return (
     <div>
       <div
+        className="app-scrollbar"
         style={{
           minHeight: 320,
           maxHeight: 540,
@@ -40,6 +65,11 @@ export default function ChatBox({
         {messages.map((msg, index) => (
           <div key={`${msg.role}-${index}`} style={{ marginBottom: 10 }}>
             <strong>{msg.role === "user" ? "Bạn" : "Trợ lý"}:</strong>
+            {msg.warning && (
+              <div style={{ marginTop: 6, color: "#92400e", background: "#fef3c7", border: "1px solid #f59e0b", borderRadius: 8, padding: "6px 8px" }}>
+                ⚠ {msg.warning}
+              </div>
+            )}
             <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>
               {msg.content}
             </p>
@@ -57,6 +87,30 @@ export default function ChatBox({
       {error && <p style={{ color: "red", marginBottom: 8 }}>{error}</p>}
 
       <div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }} aria-label="Prompt gợi ý">
+          {visiblePrompts.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => handlePromptClick(prompt)}
+              disabled={loading}
+              style={{
+                border: "1px solid #d6b36a",
+                borderRadius: 999,
+                background: "#fff8e6",
+                color: "#5f4518",
+                cursor: loading ? "not-allowed" : "pointer",
+                padding: "6px 10px",
+              }}
+              onFocus={(event) => { event.currentTarget.style.boxShadow = "0 0 0 3px rgba(214,179,106,.35)"; }}
+              onBlur={(event) => { event.currentTarget.style.boxShadow = "none"; }}
+              onMouseEnter={(event) => { event.currentTarget.style.background = "#fdecc0"; }}
+              onMouseLeave={(event) => { event.currentTarget.style.background = "#fff8e6"; }}
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
         <textarea
           value={value}
           onChange={(e) => onChange?.(e.target.value)}
