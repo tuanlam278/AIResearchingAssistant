@@ -62,10 +62,14 @@ async def download_document(document_id: str, user: dict = Depends(get_current_u
     download = get_system_document_download(document_id)
     if download.get("type") == "redirect":
         return RedirectResponse(download["url"])
+    content_type = download.get("mime_type") or "application/octet-stream"
     return Response(
         content=download["content"],
-        media_type=download.get("mime_type") or "application/octet-stream",
-        headers={"Content-Disposition": content_disposition_for_filename(download.get("filename") or "system-document")},
+        media_type=content_type,
+        headers={
+            "Content-Type": content_type,
+            "Content-Disposition": content_disposition_for_filename(download.get("filename") or f"document-{document_id}.pdf"),
+        },
     )
 
 

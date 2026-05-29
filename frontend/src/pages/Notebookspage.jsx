@@ -17,40 +17,6 @@ const STYLES = `
     padding-bottom: 60px;
   }
 
-  /* Navbar */
-  .nb-nav {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 32px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    background: rgba(15,13,10,0.8);
-    backdrop-filter: blur(12px);
-    position: sticky; top: 0; z-index: 10;
-  }
-  .nb-nav-logo { display: flex; align-items: center; gap: 10px; }
-  .nb-nav-icon {
-    width: 34px; height: 34px; border-radius: 9px;
-    background: linear-gradient(135deg, #c4a464, #8a6a30);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 15px; box-shadow: 0 2px 10px rgba(196,164,100,0.25);
-  }
-  .nb-nav-title { font-family: 'Lora', Georgia, serif; font-size: 17px; font-weight: 600; color: #e8e0d0; }
-  .nb-nav-right { display: flex; align-items: center; gap: 12px; }
-  .nb-nav-email {
-    font-size: 12px; color: #5a5040;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.07);
-    padding: 5px 12px; border-radius: 99px;
-  }
-  .nb-logout-btn {
-    display: flex; align-items: center; gap: 6px;
-    background: none; border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 8px; padding: 6px 12px;
-    color: #6a6050; font-size: 13px; cursor: pointer;
-    font-family: 'DM Sans', sans-serif;
-    transition: color 0.2s, border-color 0.2s, background 0.2s;
-  }
-  .nb-logout-btn:hover { color: #e07878; border-color: rgba(200,80,80,0.2); background: rgba(200,80,80,0.06); }
-
   /* Content */
   .nb-content { max-width: 760px; margin: 0 auto; padding: 40px 24px 0; }
 
@@ -213,7 +179,7 @@ const STYLES = `
 
 export default function NotebooksPage() {
   const navigate = useNavigate();
-  const { token, user, logoutContext } = useAuth();
+  const { token, logoutContext } = useAuth();
 
   const [notebooks, setNotebooks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -236,12 +202,6 @@ export default function NotebooksPage() {
   };
 
   useEffect(() => { fetchNotebooks(); }, [token]);
-
-  const handleLogout = async () => {
-    try { await api.logout(token); } catch {}
-    logoutContext();
-    navigate('/login');
-  };
 
   const handleCreate = async () => {
     const name = newName.trim();
@@ -299,18 +259,6 @@ export default function NotebooksPage() {
       <style>{STYLES}</style>
 
       <div className="nb-page">
-        {/* Navbar */}
-        <nav className="nb-nav">
-          <div className="nb-nav-logo">
-            <div className="nb-nav-icon">✦</div>
-            <span className="nb-nav-title">AI Research</span>
-          </div>
-          <div className="nb-nav-right">
-            {user?.email && <span className="nb-nav-email">{user.email}</span>}
-            <button className="nb-logout-btn" onClick={handleLogout}>⎋ Đăng xuất</button>
-          </div>
-        </nav>
-
         {/* Content */}
         <div className="nb-content">
           <div className="nb-header-row">

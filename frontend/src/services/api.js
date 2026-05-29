@@ -50,7 +50,13 @@ function parseContentDispositionFilename(header = "") {
     try { return decodeURIComponent(utf8Match[1]); } catch {}
   }
   const asciiMatch = header.match(/filename="?([^";]+)"?/i);
-  return asciiMatch?.[1] || "system-document";
+  return asciiMatch?.[1] || "";
+}
+
+async function getBlobResponse(response, fallbackFilename = "document") {
+  const blob = new Blob([response.data], { type: response.headers?.["content-type"] || "application/octet-stream" });
+  const filename = parseContentDispositionFilename(response.headers?.["content-disposition"] || "") || fallbackFilename;
+  return { blob, filename, contentType: blob.type };
 }
 
 async function triggerBlobDownload(response, fallbackFilename = "system-document") {
@@ -295,6 +301,18 @@ export const api = {
       axiosInstance.delete(`/api/system-library/documents/${documentId}/bookmark`, { headers: authHeader(token) })
     ),
 
+  fetchSystemDocumentBlob: async (documentId, token, fallbackFilename = "system-document") => {
+    try {
+      const response = await axiosInstance.get(`/api/system-library/documents/${documentId}/download`, {
+        headers: authHeader(token),
+        responseType: "blob",
+      });
+      return getBlobResponse(response, fallbackFilename);
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
+
   downloadSystemDocument: async (documentId, token, fallbackFilename = "system-document") => {
     try {
       const response = await axiosInstance.get(`/api/system-library/documents/${documentId}/download`, {
@@ -332,6 +350,40 @@ export const api = {
   linkSystemDocumentToNotebook: (notebookId, systemDocumentId, token) =>
     unwrapRequest(() =>
       axiosInstance.post(`/api/notebooks/${notebookId}/system-documents`, { system_document_id: systemDocumentId }, { headers: authHeader(token) })
+    ),
+
+  // ── CROSS ANALYSIS ──────────────────────────────────────────────────────
+  uploadCrossAnalysisDocument: (file, token, onProgress) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/documents/upload", formData, {
+        headers: { ...authHeader(token) },
+        onUploadProgress: (event) => {
+          if (onProgress && event.total) onProgress(Math.round((event.loaded * 100) / event.total));
+        },
+      })
+    );
+  },
+
+  compareCrossAnalysisDocuments: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/compare", payload, { headers: authHeader(token) })
+    ),
+
+  findCrossAnalysisConflicts: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/conflicts", payload, { headers: authHeader(token) })
+    ),
+
+  synthesizeCrossAnalysisDocuments: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/synthesis", payload, { headers: authHeader(token) })
+    ),
+
+  chatCrossAnalysisDocuments: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/chat", payload, { headers: authHeader(token) })
     ),
 
   // ── CHAT ─────────────────────────────────────────────────────────────────

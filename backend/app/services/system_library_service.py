@@ -133,7 +133,32 @@ def _ascii_download_filename(filename: str) -> str:
 
 def content_disposition_for_filename(filename: str) -> str:
     original = _safe_filename(filename)
-    return f"attachment; filename=\"{_ascii_download_filename(original)}\"; filename*=UTF-8''{quote(original, safe='')}"
+    ascii_fallback = _ascii_download_filename(original) or "document-download"
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(original, safe='')}"
+
+
+def _extension_from_document(row: dict) -> str:
+    for value in (row.get("original_filename"), row.get("filename"), row.get("storage_path")):
+        if value and "." in str(value).rsplit("/", 1)[-1]:
+            return "." + str(value).rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+    guessed = mimetypes.guess_extension(row.get("mime_type") or "") or ""
+    if guessed:
+        return guessed
+    file_type = str(row.get("file_type") or "").strip().lower().lstrip(".")
+    return f".{file_type}" if file_type else ".pdf"
+
+
+def _display_download_filename(row: dict) -> str:
+    for key in ("original_filename", "filename"):
+        value = _safe_filename(str(row.get(key) or ""))
+        if value and value != "system-document":
+            return value
+    title = _safe_filename(str(row.get("title") or ""))
+    if title and title != "system-document":
+        if "." not in title.rsplit("/", 1)[-1]:
+            title = f"{title}{_extension_from_document(row)}"
+        return title
+    return f"document-{row.get('id') or 'download'}{_extension_from_document(row)}"
 
 
 def _storage_object_path(document_id: str, filename: str) -> str:
@@ -166,20 +191,42 @@ def get_system_document_download(document_id: str) -> dict:
     try:
         resp = (
             supabase.table("system_documents")
-            .select("id, filename, storage_path, download_url, file_size, mime_type")
+            .select("id, title, filename, original_filename, file_type, storage_path, download_url, file_size, mime_type")
             .eq("id", document_id)
             .single()
             .execute()
         )
-    except Exception as exc:
-        logger.exception("Lookup system document download metadata failed")
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải tài liệu."}) from exc
+    except Exception:
+        try:
+            resp = (
+                supabase.table("system_documents")
+                .select("id, title, filename, file_type, storage_path, download_url, file_size, mime_type")
+                .eq("id", document_id)
+                .single()
+                .execute()
+            )
+        except Exception as exc:
+            logger.exception("Lookup system document download metadata failed")
+            raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải tài liệu."}) from exc
 
     row, error = _supabase_response_data(resp)
+    if error:
+        try:
+            retry_resp = (
+                supabase.table("system_documents")
+                .select("id, title, filename, file_type, storage_path, download_url, file_size, mime_type")
+                .eq("id", document_id)
+                .single()
+                .execute()
+            )
+            row, error = _supabase_response_data(retry_resp)
+        except Exception as exc:
+            logger.exception("Retry lookup system document download metadata failed")
+            raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể tải tài liệu."}) from exc
     if error or not row:
         raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hệ thống."})
 
-    filename = row.get("filename") or "system-document"
+    filename = _display_download_filename(row)
     storage_path = row.get("storage_path")
     download_url = row.get("download_url")
     mime_type = row.get("mime_type") or _guess_mime_type(filename)

@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck } from 'lucide-react';
+import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck, GitCompare } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 
@@ -15,6 +15,12 @@ const NAV_ITEMS = [
     icon: Library,
     label: 'Thư viện Hệ thống',
     description: 'Kho tài liệu được chuẩn hóa, tìm kiếm ngữ nghĩa và sẵn sàng cho RAG.',
+  },
+  {
+    to: '/cross-analysis',
+    icon: GitCompare,
+    label: 'Phân tích Tương quan',
+    description: 'So sánh sâu hai tài liệu, phát hiện mâu thuẫn và xuất bảng đối chiếu.',
   },
 ];
 
