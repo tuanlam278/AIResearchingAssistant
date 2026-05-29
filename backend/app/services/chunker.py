@@ -20,7 +20,16 @@ MIN_CHUNK_TOKENS = 30
 # cl100k_base là tokenizer của GPT-4 — phổ biến, bám sát số token thực tế
 # hơn đếm ký tự. Gemini dùng tokenizer riêng nên có thể lệch ~5-10%,
 # nhưng không ảnh hưởng đáng kể đến chất lượng chunking.
-_tokenizer = tiktoken.get_encoding("cl100k_base")
+try:
+    _tokenizer = tiktoken.get_encoding("cl100k_base")
+except Exception as exc:  # pragma: no cover - offline startup fallback
+    logger.warning("Falling back to simple token counting because tiktoken encoding is unavailable: %s", exc)
+
+    class _SimpleTokenizer:
+        def encode(self, text: str) -> list[str]:
+            return (text or "").split()
+
+    _tokenizer = _SimpleTokenizer()
 
 # Regex nhận diện các section học thuật phổ biến
 # Hỗ trợ cả định dạng số hoặc chữ số La Mã đứng trước (e.g., "1. Introduction", "I. RELATED WORK")

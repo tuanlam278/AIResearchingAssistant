@@ -17,7 +17,19 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 MAX_PROMPT_TOKENS = 6000 
 RESERVED_HISTORY_TOKENS = 1000
 
-_tokenizer = tiktoken.get_encoding("cl100k_base")
+try:
+    _tokenizer = tiktoken.get_encoding("cl100k_base")
+except Exception as exc:  # pragma: no cover - offline startup fallback
+    logger.warning("Falling back to simple tokenizer because tiktoken encoding is unavailable: %s", exc)
+
+    class _SimpleTokenizer:
+        def encode(self, text: str) -> list[str]:
+            return (text or "").split()
+
+        def decode(self, tokens: list[str]) -> str:
+            return " ".join(tokens)
+
+    _tokenizer = _SimpleTokenizer()
 
 def _count_tokens(text: str) -> int:
     """Hàm phụ trợ đếm số token ước lượng."""
@@ -338,3 +350,34 @@ async def generate_workspace_summary(documents: List[dict]) -> dict:
     parsed.setdefault("overall_key_points", [])
     parsed.setdefault("suggested_questions", [])
     return parsed
+
+
+async def generate_system_document_metadata(text: str) -> dict:
+    """Generate category, tags, and a 1-2 sentence summary for a system document."""
+    sample = _trim_text_for_summary(text or "", 1800)
+    if not sample.strip():
+        return {"category": "Khác", "tags": [], "summary": ""}
+
+    prompt = (
+        "Hãy phân loại tài liệu sau cho thư viện số. Trả về JSON hợp lệ, không Markdown, "
+        "gồm đúng các trường: category, tags, summary. Category ngắn gọn. Tags là mảng chuỗi ngắn, "
+        "ưu tiên tiếng Việt nếu tài liệu tiếng Việt, không quá 6 tags. Summary chỉ 1-2 câu, tối đa 70 từ.\n\n"
+        f"Nội dung tài liệu:\n{sample}"
+    )
+    response = await client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": "Chỉ trả về JSON hợp lệ, không markdown."},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.1,
+    )
+    parsed = _extract_json_object(response.choices[0].message.content)
+    tags = parsed.get("tags") or []
+    if isinstance(tags, str):
+        tags = [item.strip() for item in tags.split(",") if item.strip()]
+    return {
+        "category": str(parsed.get("category") or "Khác").strip() or "Khác",
+        "tags": tags[:6] if isinstance(tags, list) else [],
+        "summary": str(parsed.get("summary") or "").strip(),
+    }

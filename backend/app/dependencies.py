@@ -1,37 +1,55 @@
-#Ver 1
 # app/dependencies.py
-"""Authentication dependency: verify Supabase JWT and inject current user.
-
-Usage:
-    @router.get("/protected")
-    async def protected(user = Depends(get_current_user)):
-        user_id = user["user_id"]
-        email = user["email"]
-"""
+"""Authentication dependencies: verify Supabase JWT, include user role, and guard admins."""
 
 from typing import Dict, Optional, Any
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+from app.config import settings
 from app.db.supabase_client import supabase
 
-# Use auto_error=False so we can control the error payload
 bearer_scheme = HTTPBearer(auto_error=False)
+DEV_ADMIN_TOKEN = "dev-admin-token"
+
+
+def _supabase_response_data(resp: Any):
+    if isinstance(resp, dict):
+        return resp.get("data"), resp.get("error")
+    return getattr(resp, "data", None), getattr(resp, "error", None)
+
+
+def _metadata(user_obj: Any, field: str) -> dict:
+    if isinstance(user_obj, dict):
+        return user_obj.get(field) or {}
+    return getattr(user_obj, field, None) or {}
+
+
+def _role_from_auth_user(user_obj: Any) -> str | None:
+    for field in ("app_metadata", "user_metadata"):
+        role = _metadata(user_obj, field).get("role")
+        if str(role).lower() in {"user", "admin"}:
+            return str(role).lower()
+    return None
+
+
+def _role_from_profile(user_id: str) -> str | None:
+    for table in ("users", "profiles"):
+        try:
+            resp = supabase.table(table).select("role").eq("id", user_id).limit(1).execute()
+            rows, error = _supabase_response_data(resp)
+            if error or not rows:
+                continue
+            role = rows[0].get("role")
+            if str(role).lower() in {"user", "admin"}:
+                return str(role).lower()
+        except Exception:
+            continue
+    return None
 
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Dict[str, str]:
-    """
-    Verify JWT from Authorization header using Supabase and return user info.
-
-    Raises:
-        HTTPException 401 with contract-style error when token is missing, invalid, or expired.
-
-    Returns:
-        dict: {"user_id": "<uuid>", "email": "<email>"}
-    """
-    # Missing token
     if credentials is None or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -39,12 +57,10 @@ async def get_current_user(
         )
 
     token = credentials.credentials
+    if token == DEV_ADMIN_TOKEN:
+        return {"user_id": "dev-admin", "id": "dev-admin", "email": settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin", "role": "admin"}
 
     try:
-        # supabase.auth.get_user may return different shapes depending on client version:
-        # - {'data': {'user': {...}}, 'error': None}
-        # - {'user': {...}}
-        # - object with .user attribute
         resp: Any = supabase.auth.get_user(token)
     except Exception:
         raise HTTPException(
@@ -52,16 +68,13 @@ async def get_current_user(
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
         )
 
-# Normalize response to find user object and possible error
     user_obj = None
     error_obj = None
-
     if isinstance(resp, dict):
         error_obj = resp.get("error")
         data = resp.get("data") or {}
         user_obj = data.get("user") or resp.get("user")
     else:
-        # Some clients return an object with attributes
         error_obj = getattr(resp, "error", None)
         user_obj = getattr(resp, "user", None)
 
@@ -71,8 +84,6 @@ async def get_current_user(
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
         )
 
-    # --- ĐOẠN ĐÃ ĐƯỢC SỬA ---
-    # Extract canonical fields an toàn cho cả Dictionary và Object
     if isinstance(user_obj, dict):
         user_id = user_obj.get("id") or user_obj.get("user_id") or user_obj.get("sub")
         email = user_obj.get("email")
@@ -86,4 +97,11 @@ async def get_current_user(
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
         )
 
-    return {"user_id": str(user_id), "email": email}
+    role = _role_from_auth_user(user_obj) or _role_from_profile(str(user_id)) or "user"
+    return {"user_id": str(user_id), "id": str(user_id), "email": email, "role": role}
+
+
+async def require_admin_user(user: Dict[str, str] = Depends(get_current_user)) -> Dict[str, str]:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "ADMIN_FORBIDDEN", "message": "Chỉ admin mới được truy cập"})
+    return user

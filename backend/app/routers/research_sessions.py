@@ -88,6 +88,40 @@ def _normalize_session(row: dict) -> dict:
     }
 
 
+def _normalize_session_note(row: dict) -> dict:
+    return {
+        "id": row.get("id"),
+        "workspace_id": row.get("workspace_id"),
+        "title": row.get("title") or "Ghi chú mới",
+        "content": row.get("content") or "",
+        "citations": row.get("citations") or [],
+        "source_message_id": row.get("source_message_id"),
+        "research_session_id": row.get("research_session_id"),
+        "note_type": row.get("note_type") or "text",
+        "metadata": row.get("metadata") or {},
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def _load_session_notes(session_id: str) -> list[dict]:
+    try:
+        resp = (
+            supabase.table("notes")
+            .select("id, workspace_id, title, content, citations, source_message_id, research_session_id, note_type, metadata, created_at, updated_at")
+            .eq("research_session_id", session_id)
+            .order("updated_at", desc=True)
+            .execute()
+        )
+        rows, error = _supabase_response_data(resp)
+        if error:
+            return []
+        return [_normalize_session_note(row) for row in rows or []]
+    except Exception:
+        logger.warning("Could not load notes for research session %s", session_id)
+        return []
+
+
 @router.get("/workspaces/{workspace_id}/research-sessions", response_model=dict)
 async def list_research_sessions(workspace_id: str, user: dict = Depends(get_current_user)):
     user_id = _get_user_id(user)
@@ -220,7 +254,8 @@ async def get_research_session_messages(session_id: str, user: dict = Depends(ge
         }
         for row in rows or []
     ]
-    return {"success": True, "data": {"session": session, "messages": messages}}
+    notes = _load_session_notes(session_id)
+    return {"success": True, "data": {"session": session, "messages": messages, "notes": notes}}
 
 
 @router.delete("/research-sessions/{session_id}/messages", response_model=dict)

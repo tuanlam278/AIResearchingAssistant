@@ -852,9 +852,16 @@ export default function ResearchPage() {
 
   useEffect(() => {
     if (!token || !notebookId) return;
+    if (!researchSessionId) {
+      setNotes([]);
+      setSavedMessageIds(new Set());
+      setLoadingNotes(false);
+      return undefined;
+    }
+
     let cancelled = false;
     setLoadingNotes(true);
-    api.getWorkspaceNotes(notebookId, token)
+    api.getWorkspaceNotes(notebookId, token, { research_session_id: researchSessionId })
       .then((result) => {
         if (cancelled) return;
         const fetchedNotes = result?.notes ?? [];
@@ -862,13 +869,13 @@ export default function ResearchPage() {
         setSavedMessageIds(new Set(fetchedNotes.map((note) => note.source_message_id).filter(Boolean)));
       })
       .catch((err) => {
-        if (!cancelled) showToast("error", err.message || "Không thể tải ghi chú.");
+        if (!cancelled) showToast("error", err.message || "Không thể tải ghi chú của phiên nghiên cứu.");
       })
       .finally(() => {
         if (!cancelled) setLoadingNotes(false);
       });
     return () => { cancelled = true; };
-  }, [notebookId, token]);
+  }, [notebookId, token, researchSessionId]);
 
   useEffect(() => {
     if (!researchSessionId || !token) return;
@@ -878,9 +885,14 @@ export default function ResearchPage() {
         if (cancelled) return;
         const session = result?.session || researchSession;
         const loadedMessages = result?.messages || [];
+        const sessionNotes = result?.notes || null;
         setResearchSession(session);
         setSelectedDocumentIds(session?.selected_document_ids || selectedDocumentIds);
         setMessages(loadedMessages);
+        if (sessionNotes) {
+          setNotes(sessionNotes);
+          setSavedMessageIds(new Set(sessionNotes.map((note) => note.source_message_id).filter(Boolean)));
+        }
       })
       .catch((err) => {
         if (!cancelled) showToast("error", err.message || "Không thể tải lịch sử chat.");
@@ -1261,6 +1273,7 @@ export default function ResearchPage() {
         note_type: "flashcards",
         metadata: { flashcards: cards },
         citations: [],
+        research_session_id: researchSessionId,
       };
       const result = await api.createWorkspaceNote(notebookId, payload, token);
       const createdNote = result?.note;
@@ -1288,6 +1301,7 @@ export default function ResearchPage() {
         note_type: mode === "test" ? "test" : "quiz",
         metadata: mode === "test" ? { test: quiz } : { quiz },
         citations: [],
+        research_session_id: researchSessionId,
       };
       const result = await api.createWorkspaceNote(notebookId, payload, token);
       const createdNote = result?.note;
@@ -1373,6 +1387,7 @@ export default function ResearchPage() {
         content: msg.content,
         citations: Array.isArray(msg.citations) ? msg.citations : [],
         source_message_id: sourceMessageId,
+        research_session_id: researchSessionId,
       };
       const result = await api.createWorkspaceNote(notebookId, payload, token);
       const createdNote = result?.note;

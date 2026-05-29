@@ -32,6 +32,7 @@ class RegisterRequest(BaseModel):
 class UserInfo(BaseModel):
     user_id: str
     email: str
+    role: str = "user"
 
 
 class RegisterResponse(BaseModel):
@@ -39,7 +40,7 @@ class RegisterResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
 
 

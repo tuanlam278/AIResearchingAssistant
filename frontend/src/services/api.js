@@ -44,6 +44,29 @@ async function unwrapRequest(requestFn) {
   }
 }
 
+function parseContentDispositionFilename(header = "") {
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try { return decodeURIComponent(utf8Match[1]); } catch {}
+  }
+  const asciiMatch = header.match(/filename="?([^";]+)"?/i);
+  return asciiMatch?.[1] || "system-document";
+}
+
+async function triggerBlobDownload(response, fallbackFilename = "system-document") {
+  const blob = new Blob([response.data], { type: response.headers?.["content-type"] || "application/octet-stream" });
+  const filename = parseContentDispositionFilename(response.headers?.["content-disposition"] || "") || fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return filename;
+}
+
 const authHeader = (token) => ({ Authorization: `Bearer ${token}` });
 
 async function readSseStream(response, callbacks = {}) {
@@ -94,6 +117,9 @@ export const api = {
 
   register: (email, password) =>
     unwrapRequest(() => axiosInstance.post("/api/auth/register", { email, password })),
+
+  me: (token) =>
+    unwrapRequest(() => axiosInstance.get("/api/auth/me", { headers: authHeader(token) })),
 
   logout: (token) =>
     unwrapRequest(() => axiosInstance.post("/api/auth/logout", {}, { headers: authHeader(token) })),
@@ -155,9 +181,14 @@ export const api = {
     ),
 
   // ── NOTES ────────────────────────────────────────────────────────────────
-  getWorkspaceNotes: (workspaceId, token) =>
+  getWorkspaceNotes: (workspaceId, token, params = {}) =>
     unwrapRequest(() =>
-      axiosInstance.get(`/api/workspaces/${workspaceId}/notes`, { headers: authHeader(token) })
+      axiosInstance.get(`/api/workspaces/${workspaceId}/notes`, { params, headers: authHeader(token) })
+    ),
+
+  getResearchSessionNotes: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/research-sessions/${sessionId}/notes`, { headers: authHeader(token) })
     ),
 
   createWorkspaceNote: (workspaceId, payload, token) =>
@@ -235,6 +266,72 @@ export const api = {
   generateTest: (sessionId, payload, token) =>
     unwrapRequest(() =>
       axiosInstance.post(`/api/research-sessions/${sessionId}/tests/generate`, payload, { headers: authHeader(token) })
+    ),
+
+
+  // ── SYSTEM LIBRARY ───────────────────────────────────────────────────────
+  listSystemLibraryDocuments: (params, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/system-library/documents", { params, headers: authHeader(token) })
+    ),
+
+  searchSystemLibrary: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/system-library/search", payload, { headers: authHeader(token) })
+    ),
+
+  getSystemLibraryBookmarks: (token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/system-library/bookmarks", { headers: authHeader(token) })
+    ),
+
+  bookmarkSystemDocument: (documentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/system-library/documents/${documentId}/bookmark`, {}, { headers: authHeader(token) })
+    ),
+
+  unbookmarkSystemDocument: (documentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/system-library/documents/${documentId}/bookmark`, { headers: authHeader(token) })
+    ),
+
+  downloadSystemDocument: async (documentId, token, fallbackFilename = "system-document") => {
+    try {
+      const response = await axiosInstance.get(`/api/system-library/documents/${documentId}/download`, {
+        headers: authHeader(token),
+        responseType: "blob",
+      });
+      return triggerBlobDownload(response, fallbackFilename);
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
+
+  importSystemDocument: (payload, token, onProgress) => {
+    const formData = new FormData();
+    formData.append("file", payload.file);
+    formData.append("title", payload.title || "");
+    formData.append("category", payload.category || "");
+    formData.append("tags", payload.tags || "");
+    return unwrapRequest(() =>
+      axiosInstance.post("/api/admin/system-library/import", formData, {
+        headers: { ...authHeader(token) },
+        onUploadProgress: (event) => {
+          if (onProgress && event.total) onProgress(Math.round((event.loaded * 100) / event.total));
+        },
+      })
+    );
+  },
+
+  listAdminSystemDocuments: (token) =>
+    unwrapRequest(() => axiosInstance.get("/api/admin/system-library/documents", { headers: authHeader(token) })),
+
+  deleteAdminSystemDocument: (documentId, token) =>
+    unwrapRequest(() => axiosInstance.delete(`/api/admin/system-library/documents/${documentId}`, { headers: authHeader(token) })),
+
+  linkSystemDocumentToNotebook: (notebookId, systemDocumentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/notebooks/${notebookId}/system-documents`, { system_document_id: systemDocumentId }, { headers: authHeader(token) })
     ),
 
   // ── CHAT ─────────────────────────────────────────────────────────────────

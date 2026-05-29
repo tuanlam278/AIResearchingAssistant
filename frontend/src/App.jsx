@@ -1,15 +1,26 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import AppShell from './layouts/AppShell';
 import NotebooksPage from './pages/Notebookspage';
 import NotebookPage from './pages/Notebookpage';
 import ResearchPage from './pages/ResearchPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import SystemLibraryPage from './pages/SystemLibraryPage';
+import AdminPage from './pages/AdminPage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, isReady } = useAuth();
   if (!isReady && !token) return <Navigate to="/login" replace />;
   if (isReady && !token) return <Navigate to="/login" replace />;
+  return children;
+};
+
+const AdminRoute = ({ children }) => {
+  const { token, user, isReady } = useAuth();
+  if (!isReady && !token) return <Navigate to="/login" replace />;
+  if (isReady && !token) return <Navigate to="/login" replace />;
+  if (user?.role !== 'admin') return <Navigate to="/" replace />;
   return children;
 };
 
@@ -23,31 +34,19 @@ export default function App() {
           <Route path="/register" element={<RegisterPage />} />
 
           <Route
-            path="/"
             element={
               <ProtectedRoute>
-                <NotebooksPage />
+                <AppShell />
               </ProtectedRoute>
             }
-          />
-
-          <Route
-            path="/notebooks/:notebookId"
-            element={
-              <ProtectedRoute>
-                <NotebookPage />
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
-            path="/research/:notebookId"
-            element={
-              <ProtectedRoute>
-                <ResearchPage />
-              </ProtectedRoute>
-            }
-          />
+          >
+            <Route path="/" element={<NotebooksPage />} />
+            <Route path="/notebook" element={<Navigate to="/" replace />} />
+            <Route path="/notebooks/:notebookId" element={<NotebookPage />} />
+            <Route path="/research/:notebookId" element={<ResearchPage />} />
+            <Route path="/system-library" element={<SystemLibraryPage />} />
+            <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
+          </Route>
 
           <Route path="*" element={<Navigate to="/" />} />
 

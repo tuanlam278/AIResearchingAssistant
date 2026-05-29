@@ -17,6 +17,7 @@ class NoteCreateRequest(BaseModel):
     content: str = Field(..., min_length=1)
     citations: List[dict] = Field(default_factory=list)
     source_message_id: Optional[str] = None
+    research_session_id: Optional[str] = None
     note_type: Optional[str] = None
     metadata: dict = Field(default_factory=dict)
 
@@ -57,6 +58,7 @@ def _normalize_note(row: dict) -> dict:
         "content": row.get("content") or "",
         "citations": citations,
         "source_message_id": row.get("source_message_id"),
+        "research_session_id": row.get("research_session_id"),
         "note_type": row.get("note_type") or ("flashcards" if isinstance(row.get("metadata"), dict) and row.get("metadata", {}).get("flashcards") else "text"),
         "metadata": row.get("metadata") or {},
         "created_at": row.get("created_at"),
@@ -92,12 +94,52 @@ def _ensure_workspace_owner(workspace_id: str, user_id: str) -> None:
         )
 
 
+def _ensure_research_session_owner(research_session_id: str, workspace_id: str, user_id: str) -> None:
+    try:
+        resp = (
+            supabase.table("research_sessions")
+            .select("id, notebook_id, notebooks!inner(user_id)")
+            .eq("id", research_session_id)
+            .eq("notebook_id", workspace_id)
+            .eq("notebooks.user_id", user_id)
+            .execute()
+        )
+    except Exception:
+        logger.exception("Supabase research session ownership check failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra phiên nghiên cứu"},
+        )
+
+    data, error = _supabase_response_data(resp)
+    if error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra phiên nghiên cứu"},
+        )
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy phiên nghiên cứu"},
+        )
+
+
+def _notes_select(include_session: bool = True, include_structured: bool = True) -> str:
+    columns = ["id", "workspace_id", "title", "content", "citations", "source_message_id"]
+    if include_session:
+        columns.append("research_session_id")
+    if include_structured:
+        columns.extend(["note_type", "metadata"])
+    columns.extend(["created_at", "updated_at"])
+    return ", ".join(columns)
+
+
 def _get_note_for_user(note_id: str, user_id: str) -> dict:
     try:
         try:
             resp = (
                 supabase.table("notes")
-                .select("id, workspace_id, title, content, citations, source_message_id, note_type, metadata, created_at, updated_at, notebooks!inner(user_id)")
+                .select("id, workspace_id, title, content, citations, source_message_id, research_session_id, note_type, metadata, created_at, updated_at, notebooks!inner(user_id)")
                 .eq("id", note_id)
                 .eq("notebooks.user_id", user_id)
                 .single()
@@ -144,29 +186,29 @@ def _get_note_for_user(note_id: str, user_id: str) -> dict:
 @router.get("/workspaces/{workspace_id}/notes", response_model=dict)
 async def list_workspace_notes(
     workspace_id: str,
+    research_session_id: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
     user_id = _get_user_id(user)
     _ensure_workspace_owner(workspace_id, user_id)
 
     try:
-        resp = (
-            supabase.table("notes")
-            .select("id, workspace_id, title, content, citations, source_message_id, note_type, metadata, created_at, updated_at")
-            .eq("workspace_id", workspace_id)
-            .order("updated_at", desc=True)
-            .execute()
-        )
+        if research_session_id:
+            _ensure_research_session_owner(research_session_id, workspace_id, user_id)
+        query = supabase.table("notes").select(_notes_select()).eq("workspace_id", workspace_id)
+        if research_session_id:
+            query = query.eq("research_session_id", research_session_id)
+        resp = query.order("updated_at", desc=True).execute()
         data, error = _supabase_response_data(resp)
         if error:
-            resp = (
-                supabase.table("notes")
-                .select("id, workspace_id, title, content, citations, source_message_id, created_at, updated_at")
-                .eq("workspace_id", workspace_id)
-                .order("updated_at", desc=True)
-                .execute()
-            )
+            query = supabase.table("notes").select(_notes_select(include_session=False, include_structured=False)).eq("workspace_id", workspace_id)
+            if research_session_id:
+                query = query.eq("research_session_id", research_session_id)
+            resp = query.order("updated_at", desc=True).execute()
             data, error = _supabase_response_data(resp)
+        if error and research_session_id:
+            # Backward compatibility before the migration is applied: do not mix workspace-level notes into sessions.
+            data, error = [], None
     except Exception:
         logger.exception("Supabase list notes failed")
         raise HTTPException(
@@ -193,6 +235,9 @@ async def create_workspace_note(
     user_id = _get_user_id(user)
     _ensure_workspace_owner(workspace_id, user_id)
 
+    if body.research_session_id:
+        _ensure_research_session_owner(body.research_session_id, workspace_id, user_id)
+
     now = datetime.now(timezone.utc).isoformat()
     payload = {
         "workspace_id": workspace_id,
@@ -200,6 +245,7 @@ async def create_workspace_note(
         "content": body.content.strip(),
         "citations": body.citations,
         "source_message_id": body.source_message_id,
+        "research_session_id": body.research_session_id,
         "note_type": body.note_type or "text",
         "metadata": body.metadata or {},
         "updated_at": now,
@@ -209,14 +255,18 @@ async def create_workspace_note(
         try:
             resp = supabase.table("notes").insert(payload).execute()
         except Exception:
-            payload.pop("note_type", None)
-            payload.pop("metadata", None)
-            resp = supabase.table("notes").insert(payload).execute()
+            legacy_payload = {**payload}
+            legacy_payload.pop("note_type", None)
+            legacy_payload.pop("metadata", None)
+            resp = supabase.table("notes").insert(legacy_payload).execute()
     except Exception:
         logger.exception("Supabase create note failed")
+        message = "Lỗi khi tạo ghi chú"
+        if body.research_session_id:
+            message = "Không thể tạo ghi chú gắn với phiên nghiên cứu. Vui lòng áp dụng migration notes trước."
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tạo ghi chú"},
+            detail={"code": "INTERNAL_ERROR", "message": message},
         )
 
     data, error = _supabase_response_data(resp)
@@ -227,6 +277,48 @@ async def create_workspace_note(
         )
 
     return {"success": True, "data": {"note": _normalize_note(data[0])}}
+
+
+@router.get("/research-sessions/{research_session_id}/notes", response_model=dict)
+async def list_research_session_notes(
+    research_session_id: str,
+    user: dict = Depends(get_current_user),
+):
+    user_id = _get_user_id(user)
+    try:
+        session_resp = (
+            supabase.table("research_sessions")
+            .select("id, notebook_id, notebooks!inner(user_id)")
+            .eq("id", research_session_id)
+            .eq("notebooks.user_id", user_id)
+            .execute()
+        )
+    except Exception:
+        logger.exception("Supabase research session note ownership check failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra phiên nghiên cứu"})
+    sessions, session_error = _supabase_response_data(session_resp)
+    if session_error:
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra phiên nghiên cứu"})
+    if not sessions:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy phiên nghiên cứu"})
+
+    try:
+        resp = (
+            supabase.table("notes")
+            .select(_notes_select())
+            .eq("research_session_id", research_session_id)
+            .order("updated_at", desc=True)
+            .execute()
+        )
+        data, error = _supabase_response_data(resp)
+        if error:
+            data, error = [], None
+    except Exception:
+        logger.exception("Supabase list research session notes failed")
+        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi lấy ghi chú của phiên nghiên cứu"})
+
+    notes = [_normalize_note(row) for row in (data or [])]
+    return {"success": True, "data": {"notes": notes, "total": len(notes)}}
 
 
 @router.patch("/notes/{note_id}", response_model=dict)

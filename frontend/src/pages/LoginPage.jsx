@@ -11,8 +11,8 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false);
 
   const navigate = useNavigate();
-  const { token, loginContext } = useAuth();
-  if (token) return <Navigate to="/" replace />;
+  const { token, user, loginContext } = useAuth();
+  if (token) return <Navigate to={user?.role === 'admin' ? '/admin' : '/'} replace />;
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -22,7 +22,7 @@ export default function LoginPage() {
       const response = await api.login(email, password);
       if (response && response.access_token) {
         loginContext(response.access_token, response.user);
-        navigate('/', { replace: true });
+        navigate(response.user?.role === 'admin' ? '/admin' : '/', { replace: true });
       }
     } catch (err) {
       setError(err.message || 'Sai email hoặc mật khẩu. Vui lòng thử lại!');
@@ -238,11 +238,11 @@ export default function LoginPage() {
               <label className="auth-label">Email</label>
               <input
                 className="auth-input"
-                type="email"
+                type="text"
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="ten@example.com"
+                placeholder="ten@example.com hoặc admin"
                 autoComplete="email"
               />
             </div>

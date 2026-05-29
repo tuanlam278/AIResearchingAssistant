@@ -483,3 +483,119 @@ async def list_documents_in_notebook(
     ]
 
     return {"success": True, "data": {"documents": documents, "total": len(documents)}}
+
+class LinkSystemDocumentRequest(BaseModel):
+    system_document_id: str
+
+
+def _ensure_notebook_owner(notebook_id: str, user_id: str) -> None:
+    try:
+        nb_resp = supabase.table("notebooks").select("id").match({"id": notebook_id, "user_id": user_id}).execute()
+    except Exception as exc:
+        logger.exception("Supabase check notebook failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra notebook"}) from exc
+    nb_data, _ = _supabase_response_data(nb_resp)
+    if not nb_data:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy notebook"})
+
+
+def _vector_to_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "[" + ",".join(map(str, value)) + "]"
+    return str(value)
+
+
+@router.post("/{notebook_id}/system-documents", response_model=dict)
+async def link_system_document_to_notebook(
+    notebook_id: str,
+    body: LinkSystemDocumentRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Link a system document into a user's research notebook without duplicating the physical file."""
+    user_id = _get_user_id(user)
+    _ensure_notebook_owner(notebook_id, user_id)
+
+    try:
+        doc_resp = supabase.table("system_documents").select(
+            "id, title, filename, file_type, page_count, is_vector_ready"
+        ).eq("id", body.system_document_id).limit(1).execute()
+    except Exception as exc:
+        logger.exception("Load system document failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"}) from exc
+    doc_rows, doc_error = _supabase_response_data(doc_resp)
+    if doc_error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"})
+    if not doc_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hệ thống"})
+
+    system_doc = doc_rows[0]
+    if not system_doc.get("is_vector_ready"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "VECTOR_NOT_READY", "message": "Tài liệu hệ thống chưa sẵn sàng cho RAG"})
+
+    linked_filename = f"[Hệ thống] {system_doc.get('title') or system_doc.get('filename')}"
+    try:
+        existing_resp = supabase.table("documents").select("id, filename, file_type, status, page_count, chunk_count, created_at").eq("notebook_id", notebook_id).eq("source_type", "system_document").eq("source_id", body.system_document_id).limit(1).execute()
+        existing_rows, _ = _supabase_response_data(existing_resp)
+        if existing_rows:
+            row = existing_rows[0]
+            return {"success": True, "data": {"document": {"doc_id": row["id"], "id": row["id"], "filename": row["filename"], "file_type": row.get("file_type"), "status": row.get("status") or "ready", "page_count": row.get("page_count"), "chunk_count": row.get("chunk_count"), "created_at": row.get("created_at"), "source_type": "system_document", "source_id": body.system_document_id}, "already_linked": True}}
+    except Exception:
+        # Older schema may not have source_type/source_id yet; continue and rely on filename uniqueness.
+        pass
+
+    try:
+        chunks_resp = supabase.table("system_document_chunks").select("id, content, page_start, page_end, embedding").eq("document_id", body.system_document_id).order("created_at", desc=False).execute()
+        chunks, chunks_error = _supabase_response_data(chunks_resp)
+    except Exception as exc:
+        logger.exception("Load system document chunks failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"code": "INTERNAL_ERROR", "message": "Không thể đọc vector tài liệu hệ thống"}) from exc
+    if chunks_error or not chunks:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "VECTOR_NOT_READY", "message": "Tài liệu hệ thống chưa có chunks/vector"})
+
+    doc_payload = {
+        "notebook_id": notebook_id,
+        "filename": linked_filename,
+        "file_type": system_doc.get("file_type"),
+        "page_count": system_doc.get("page_count") or 0,
+        "chunk_count": len(chunks),
+        "status": "ready",
+        "source_type": "system_document",
+        "source_id": body.system_document_id,
+    }
+    try:
+        insert_resp = supabase.table("documents").insert(doc_payload).execute()
+    except Exception:
+        doc_payload.pop("source_type", None)
+        doc_payload.pop("source_id", None)
+        insert_resp = supabase.table("documents").insert(doc_payload).execute()
+    inserted, insert_error = _supabase_response_data(insert_resp)
+    if insert_error or not inserted:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"code": "DB_INSERT_FAILED", "message": "Không thể thêm tài liệu vào Không gian Nghiên cứu"})
+
+    linked_doc = inserted[0]
+    linked_doc_id = linked_doc["id"]
+    try:
+        chunk_rows = [
+            {
+                "doc_id": linked_doc_id,
+                "notebook_id": notebook_id,
+                "section": "System Library",
+                "content": chunk.get("content") or "",
+                "page_number": chunk.get("page_start") or chunk.get("page_end") or 1,
+                "chunk_index": index,
+                "embedding": _vector_to_string(chunk.get("embedding")),
+            }
+            for index, chunk in enumerate(chunks)
+            if chunk.get("content")
+        ]
+        supabase.table("document_chunks").insert(chunk_rows).execute()
+    except Exception as exc:
+        logger.exception("Copy system chunks into notebook failed")
+        supabase.table("documents").delete().eq("id", linked_doc_id).execute()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"code": "CHUNK_INSERT_FAILED", "message": "Không thể đưa tài liệu hệ thống vào RAG notebook"}) from exc
+
+    return {"success": True, "data": {"document": {"doc_id": linked_doc_id, "id": linked_doc_id, "filename": linked_doc.get("filename") or linked_filename, "file_type": linked_doc.get("file_type") or system_doc.get("file_type"), "status": "ready", "page_count": linked_doc.get("page_count") or system_doc.get("page_count"), "chunk_count": len(chunks), "created_at": linked_doc.get("created_at"), "source_type": "system_document", "source_id": body.system_document_id}, "already_linked": False}}
