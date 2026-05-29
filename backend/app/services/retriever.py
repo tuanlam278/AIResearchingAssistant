@@ -14,7 +14,7 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-async def retrieve_chunks(query_vector: List[float], notebook_id: str) -> List[dict]:
+async def retrieve_chunks(query_vector: List[float], notebook_id: str, document_ids: List[str] | None = None) -> List[dict]:
     """
     Tìm kiếm top-K chunks liên quan nhất với vector câu hỏi của người dùng.
 
@@ -60,7 +60,7 @@ async def retrieve_chunks(query_vector: List[float], notebook_id: str) -> List[d
                 {
                     "query_embedding": vector_str,
                     "target_notebook_id": notebook_id,
-                    "match_count": settings.TOP_K_CHUNKS,
+                    "match_count": settings.TOP_K_CHUNKS * (4 if document_ids else 1),
                     "match_threshold": settings.MIN_SIMILARITY
                 },
             ).execute()
@@ -69,6 +69,9 @@ async def retrieve_chunks(query_vector: List[float], notebook_id: str) -> List[d
             raise RuntimeError(f"RETRIEVAL_FAILED: {e}") from e
 
         chunks = result.data or []
+        if document_ids:
+            allowed_ids = {str(doc_id) for doc_id in document_ids}
+            chunks = [chunk for chunk in chunks if str(chunk.get("doc_id")) in allowed_ids]
 
         if not chunks:
             logger.warning(

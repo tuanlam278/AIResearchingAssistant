@@ -9,6 +9,18 @@ const LOADING_LABELS = {
   generating: "Đang tạo câu trả lời...",
 };
 
+const QUICK_ACTIONS = [
+  { id: "compare", icon: "⇄", label: "So sánh tài liệu", requiresTwo: true, prompt: "Hãy so sánh các tài liệu đã chọn. Trình bày điểm giống nhau, khác nhau, phương pháp nghiên cứu, kết quả chính, đóng góp và hạn chế của từng tài liệu." },
+  { id: "main_points", icon: "☑", label: "Trình bày ý chính", prompt: "Hãy trình bày các ý chính của tài liệu đã chọn theo dạng bullet rõ ràng, dễ hiểu." },
+  { id: "summarize", icon: "📄", label: "Tóm tắt tài liệu", prompt: "Hãy tóm tắt tài liệu đã chọn, gồm mục tiêu, phương pháp, kết quả và kết luận." },
+  { id: "terms", icon: "?", label: "Giải thích thuật ngữ khó", prompt: "Hãy tìm và giải thích các thuật ngữ học thuật khó trong tài liệu đã chọn bằng ngôn ngữ dễ hiểu." },
+  { id: "quiz", icon: "❔", label: "Tạo câu hỏi ôn tập", prompt: "Hãy tạo 1 -> 2 câu hỏi ôn tập từ tài liệu đã chọn, kèm đáp án ngắn." },
+  { id: "claims", icon: "❞", label: "Trích xuất luận điểm chính", prompt: "Hãy trích xuất các luận điểm chính, bằng chứng hỗ trợ và kết luận từ tài liệu đã chọn." },
+  { id: "outline", icon: "☷", label: "Tạo dàn ý nghiên cứu", prompt: "Hãy tạo một dàn ý nghiên cứu dựa trên tài liệu đã chọn, gồm các mục lớn, ý phụ và gợi ý triển khai." },
+  { id: "similar_diff", icon: "▦", label: "Tìm điểm giống và khác nhau", prompt: "Hãy tìm các điểm giống và khác nhau giữa các tài liệu đã chọn, trình bày trong bảng nếu phù hợp." },
+  { id: "next_questions", icon: "✦", label: "Gợi ý câu hỏi tiếp theo", prompt: "Dựa trên các tài liệu đã chọn và cuộc trò chuyện hiện tại, hãy gợi ý các câu hỏi tiếp theo mà người dùng nên hỏi để hiểu sâu hơn nội dung nghiên cứu." },
+];
+
 const isAbortError = (err) => err?.name === "AbortError" || err?.code === "ABORT_ERR";
 
 function getCitationIndex(source, index) {
@@ -351,14 +363,20 @@ export default function ResearchPage() {
   const [savingNoteMessageId, setSavingNoteMessageId] = useState(null);
   const [savedMessageIds, setSavedMessageIds] = useState(() => new Set());
   const [suggestedQuestions, setSuggestedQuestions] = useState(() => location.state?.suggestedQuestions || []);
+  const [researchSession, setResearchSession] = useState(() => location.state?.researchSession || null);
+  const [researchSessionId, setResearchSessionId] = useState(() => location.state?.researchSessionId || location.state?.researchSession?.id || null);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState(() => location.state?.selectedDocumentIds || location.state?.researchSession?.selected_document_ids || []);
+  const [selectedDocuments, setSelectedDocuments] = useState(() => location.state?.selectedDocuments || []);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
 
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const activeRequestRef = useRef(null);
   const loadingTimerRef = useRef(null);
+  const quickActionsRef = useRef(null);
 
   const chatHistory = useMemo(
-    () => messages.map(({ role, content }) => ({ role, content })),
+    () => messages.filter((msg) => msg.role !== "system").map(({ role, content }) => ({ role, content })),
     [messages]
   );
 
@@ -403,9 +421,41 @@ export default function ResearchPage() {
   }, [notebookId, token]);
 
   useEffect(() => {
+    if (!researchSessionId || !token) return;
+    let cancelled = false;
+    api.getResearchSessionMessages(researchSessionId, token)
+      .then((result) => {
+        if (cancelled) return;
+        const session = result?.session || researchSession;
+        const loadedMessages = result?.messages || [];
+        setResearchSession(session);
+        setSelectedDocumentIds(session?.selected_document_ids || selectedDocumentIds);
+        setMessages(loadedMessages);
+      })
+      .catch((err) => {
+        if (!cancelled) showToast("error", err.message || "Không thể tải lịch sử chat.");
+      });
+    return () => { cancelled = true; };
+  }, [researchSessionId, token]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (quickActionsRef.current && !quickActionsRef.current.contains(event.target)) {
+        setQuickActionsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
     const prefillQuestion = location.state?.prefillQuestion;
     const incomingSuggestions = location.state?.suggestedQuestions || [];
     if (incomingSuggestions.length > 0) setSuggestedQuestions(incomingSuggestions);
+    if (location.state?.researchSession) setResearchSession(location.state.researchSession);
+    if (location.state?.researchSessionId) setResearchSessionId(location.state.researchSessionId);
+    if (location.state?.selectedDocumentIds) setSelectedDocumentIds(location.state.selectedDocumentIds);
+    if (location.state?.selectedDocuments) setSelectedDocuments(location.state.selectedDocuments);
     if (prefillQuestion) setInput(prefillQuestion);
   }, [location.state]);
 
@@ -473,7 +523,7 @@ export default function ResearchPage() {
 
     try {
       await api.streamResearchQuery(
-        { notebookId, question, chatHistory: history },
+        { notebookId, question, chatHistory: history, selectedDocumentIds, researchSessionId },
         token,
         {
           onStatus: (status) => {
@@ -561,6 +611,10 @@ export default function ResearchPage() {
   const handleSubmit = async () => {
     const question = input.trim();
     if (!question || loading) return;
+    if (!selectedDocumentIds.length) {
+      showToast("error", "Vui lòng chọn ít nhất một tài liệu để nghiên cứu.");
+      return;
+    }
 
     setInput("");
     const userMessage = {
@@ -568,10 +622,45 @@ export default function ResearchPage() {
       role: "user",
       content: question,
     };
-    const history = messages.map(({ role, content }) => ({ role, content }));
+    const history = chatHistory;
     setMessages((prev) => [...prev, userMessage]);
 
     await startChatRequest({ question, history, mode: "new" });
+  };
+
+  const runQuickAction = async (action) => {
+    if (loading) return;
+    if (!selectedDocumentIds.length) {
+      showToast("error", "Vui lòng chọn ít nhất một tài liệu để sử dụng tính năng này.");
+      return;
+    }
+    if (action.requiresTwo && selectedDocumentIds.length < 2) return;
+    setQuickActionsOpen(false);
+    const prompt = action.prompt;
+    const userMessage = {
+      id: crypto.randomUUID?.() || `${Date.now()}-quick-action`,
+      role: "user",
+      content: prompt,
+      source: "quick_action",
+    };
+    const history = chatHistory;
+    setMessages((prev) => [...prev, userMessage]);
+    await startChatRequest({ question: prompt, history, mode: "new" });
+  };
+
+  const handleClearHistory = async () => {
+    if (!researchSessionId || loading) return;
+    if (!window.confirm("Xóa lịch sử cuộc trò chuyện của phiên này? Tài liệu và ghi chú sẽ được giữ nguyên.")) return;
+    try {
+      await api.clearResearchSessionMessages(researchSessionId, token);
+      setMessages([]);
+      setSources([]);
+      setStreamingAnswer("");
+      setStreamingCitations([]);
+      showToast("success", "Đã xóa lịch sử cuộc trò chuyện.");
+    } catch (err) {
+      showToast("error", err.message || "Không thể xóa lịch sử cuộc trò chuyện.");
+    }
   };
 
   const handleRegenerate = async (assistantIndex) => {
@@ -592,6 +681,7 @@ export default function ResearchPage() {
     const previousMessage = messages[assistantIndex];
     const history = messages
       .slice(0, assistantIndex)
+      .filter((msg) => msg.role !== "system")
       .map(({ role, content }) => ({ role, content }));
 
     await startChatRequest({
@@ -747,6 +837,8 @@ export default function ResearchPage() {
           font-size: 15px; font-weight: 600; color: #e8e0d0;
           flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
+        .rp-clear-history { border: 1px solid rgba(224,120,120,0.25); background: rgba(224,120,120,0.08); color: #e07878; border-radius: 9px; padding: 7px 11px; font-size: 12px; cursor: pointer; }
+        .rp-clear-history:disabled { opacity: 0.4; cursor: not-allowed; }
 
         .rp-body { flex: 1; display: flex; overflow: hidden; border-top: 1px solid rgba(255,255,255,0.04); }
         .rp-chat-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid rgba(255,255,255,0.06); }
@@ -754,6 +846,7 @@ export default function ResearchPage() {
         .rp-messages::-webkit-scrollbar { width: 3px; }
         .rp-messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
 
+        .rp-context-banner { margin: 0 auto 18px; max-width: 720px; border: 1px solid rgba(196,164,100,0.18); background: rgba(196,164,100,0.08); color: #c4a464; border-radius: 12px; padding: 10px 14px; font-size: 13px; text-align: center; }
         .rp-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 12px; text-align: center; padding: 40px; }
         .rp-empty-icon { width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(135deg, rgba(196,164,100,0.15), rgba(138,106,48,0.15)); border: 1px solid rgba(196,164,100,0.2); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #c4a464; margin-bottom: 4px; }
         .rp-empty-state h3 { font-family: 'Lora', Georgia, serif; font-size: 17px; font-weight: 600; color: #e8e0d0; }
@@ -801,6 +894,14 @@ export default function ResearchPage() {
         .rp-stop-btn { padding: 0 12px; gap: 7px; background: rgba(224,120,120,0.12); color: #e07878; border: 1px solid rgba(224,120,120,0.22); font-size: 12px; font-weight: 600; }
         .rp-send-btn:hover:not(:disabled), .rp-stop-btn:hover:not(:disabled) { opacity: 0.9; transform: scale(1.04); }
         .rp-send-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+        .rp-quick-actions { position: relative; display: flex; align-items: center; gap: 8px; margin-top: 8px; min-height: 30px; }
+        .rp-plus-btn { width: 28px; height: 28px; border-radius: 9px; border: 1px solid rgba(196,164,100,0.25); background: rgba(196,164,100,0.1); color: #c4a464; cursor: pointer; font-size: 18px; line-height: 1; }
+        .rp-plus-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .rp-quick-label { color: #5a5040; font-size: 12px; }
+        .rp-quick-menu { position: absolute; left: 0; bottom: 36px; z-index: 20; width: min(360px, calc(100vw - 40px)); display: grid; grid-template-columns: 1fr; gap: 6px; padding: 10px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); background: rgba(20,17,13,0.98); box-shadow: 0 18px 44px rgba(0,0,0,0.35); }
+        .rp-quick-item { display: flex; align-items: center; gap: 9px; text-align: left; border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.04); color: #d4cfc8; border-radius: 10px; padding: 9px 10px; cursor: pointer; font-size: 12px; }
+        .rp-quick-item:hover:not(:disabled) { border-color: rgba(196,164,100,0.28); background: rgba(196,164,100,0.08); color: #c4a464; }
+        .rp-quick-item:disabled { opacity: 0.38; cursor: not-allowed; }
         .rp-hint { text-align: center; font-size: 11px; color: #3a3020; margin-top: 8px; }
 
         .rp-toast { position: fixed; right: 22px; bottom: 22px; z-index: 30; padding: 10px 14px; border-radius: 10px; font-size: 13px; box-shadow: 0 8px 28px rgba(0,0,0,0.28); }
@@ -853,17 +954,23 @@ export default function ResearchPage() {
         <header className="rp-header">
           <Link to={`/notebooks/${notebookId}`} className="rp-back">← Notebook</Link>
           <div className="rp-divider" />
-          <h1 className="rp-title">Nghiên cứu tài liệu</h1>
+          <h1 className="rp-title">{researchSession?.title || "Nghiên cứu tài liệu"}</h1>
+          <button className="rp-clear-history" onClick={handleClearHistory} disabled={!researchSessionId || loading}>Xóa lịch sử phiên này</button>
         </header>
 
         <div className="rp-body">
           <div className="rp-chat-col">
             <div className="rp-messages">
+              {selectedDocumentIds.length > 0 && (
+                <div className="rp-context-banner">
+                  Đây là nghiên cứu từ: {selectedDocuments.length > 0 ? selectedDocuments.map((doc) => doc.filename).join(', ') : `${selectedDocumentIds.length} tài liệu đã chọn`}
+                </div>
+              )}
               {messages.length === 0 && !loading ? (
                 <div className="rp-empty-state">
                   <div className="rp-empty-icon">✦</div>
                   <h3>Bắt đầu nghiên cứu</h3>
-                  <p>Đặt câu hỏi về toàn bộ tài liệu trong notebook để nhận phân tích từ AI.</p>
+                  <p>Đặt câu hỏi về các tài liệu đã chọn để nhận phân tích từ AI.</p>
                   {suggestedQuestions.length > 0 && (
                     <div className="rp-empty-suggestions">
                       {suggestedQuestions.map((question, index) => (
@@ -942,6 +1049,39 @@ export default function ResearchPage() {
                   </button>
                 ) : (
                   <button className="rp-send-btn" onClick={handleSubmit} disabled={!input.trim()} title="Gửi (Enter)">↑</button>
+                )}
+              </div>
+              <div className="rp-quick-actions" ref={quickActionsRef}>
+                <button
+                  type="button"
+                  className="rp-plus-btn"
+                  aria-label="Mở tính năng nhanh"
+                  onClick={() => setQuickActionsOpen((open) => !open)}
+                  disabled={loading}
+                >
+                  +
+                </button>
+                <span className="rp-quick-label">Tính năng nhanh</span>
+                {quickActionsOpen && (
+                  <div className="rp-quick-menu">
+                    {QUICK_ACTIONS.map((action) => {
+                      const disabled = !selectedDocumentIds.length || (action.requiresTwo && selectedDocumentIds.length < 2);
+                      return (
+                        <button
+                          key={action.id}
+                          type="button"
+                          className="rp-quick-item"
+                          disabled={disabled || loading}
+                          title={action.requiresTwo && selectedDocumentIds.length < 2 ? "Cần chọn ít nhất 2 tài liệu để so sánh." : action.label}
+                          aria-label={action.label}
+                          onClick={() => runQuickAction(action)}
+                        >
+                          <span>{action.icon}</span>
+                          <span>{action.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
               <p className="rp-hint">Enter để gửi · Shift+Enter xuống dòng</p>

@@ -142,7 +142,7 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
     try:
         check_resp = (
             supabase.table("documents")
-            .select("id, notebooks!inner(user_id)")
+            .select("id, notebook_id, notebooks!inner(user_id)")
             .eq("id", doc_id)
             .eq("notebooks.user_id", user_id)
             .execute()
@@ -161,7 +161,31 @@ async def delete_document(doc_id: str, user: dict = Depends(get_current_user)):
             detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu hoặc bạn không có quyền xóa"},
         )
 
-    # Bước 2: Thực hiện lệnh xóa
+    notebook_id = check_data[0].get("notebook_id")
+
+    # Bước 2: Xóa dữ liệu phụ thuộc trước để không còn chunk/embedding stale nếu DB chưa bật cascade.
+    try:
+        supabase.table("document_chunks").delete().eq("doc_id", doc_id).execute()
+    except Exception:
+        logger.warning("Could not delete document chunks for %s; continuing with document delete", doc_id)
+
+    # Bước 3: Gỡ document khỏi selected_document_ids của các research session trong notebook.
+    try:
+        sessions_resp = (
+            supabase.table("research_sessions")
+            .select("id, selected_document_ids")
+            .eq("notebook_id", notebook_id)
+            .execute()
+        )
+        sessions, _ = _supabase_response_data(sessions_resp)
+        for session in sessions or []:
+            selected_ids = [str(item) for item in (session.get("selected_document_ids") or []) if str(item) != str(doc_id)]
+            if selected_ids != (session.get("selected_document_ids") or []):
+                supabase.table("research_sessions").update({"selected_document_ids": selected_ids}).eq("id", session.get("id")).execute()
+    except Exception:
+        logger.warning("Could not remove deleted document from research sessions", exc_info=True)
+
+    # Bước 4: Thực hiện lệnh xóa document metadata
     try:
         resp = supabase.table("documents").delete().eq("id", doc_id).execute()
     except Exception:

@@ -282,6 +282,19 @@ const STYLES = `
     animation: spin 0.8s linear infinite;
   }
 
+  .nbp-content { max-width: 1160px; }
+  .nbp-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; }
+  .nbp-history-panel { position: sticky; top: 82px; }
+  .nbp-history-list { display: grid; gap: 10px; }
+  .nbp-history-item { width: 100%; text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #d4cfc8; border-radius: 12px; padding: 12px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+  .nbp-history-item:hover { border-color: rgba(196,164,100,0.35); background: rgba(196,164,100,0.07); }
+  .nbp-history-title { display: block; font-size: 13px; line-height: 1.45; color: #e8e0d0; }
+  .nbp-history-time { display: block; margin-top: 6px; color: #6a6050; font-size: 11px; }
+  .nbp-doc-select { width: 18px; height: 18px; accent-color: #c4a464; flex-shrink: 0; }
+  .nbp-select-all { border: 1px solid rgba(196,164,100,0.2); background: rgba(196,164,100,0.08); color: #c4a464; border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  .nbp-selected-hint { margin-top: 10px; color: #8a8070; font-size: 12px; }
+  @media (max-width: 960px) { .nbp-layout { grid-template-columns: 1fr; } .nbp-history-panel { position: static; } }
+
   @keyframes spin { to { transform: rotate(360deg); } }
 `;
 
@@ -290,11 +303,16 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function normalizeFilename(name = '') {
+  return name.trim().toLowerCase();
+}
 
-function DocumentSummaryPanel({ summary, loading, error, onStartChat, onQuestionClick }) {
+
+function DocumentSummaryPanel({ summary, loading, error, selectedDocumentIds, canStartResearch, onStartChat, onQuestionClick }) {
   const documents = summary?.documents || [];
   const suggestions = summary?.suggested_questions || [];
   const keyPoints = summary?.overall_key_points || [];
+  const showOverall = documents.length >= 2 && Boolean(summary?.overall_summary);
   if (!loading && !error && documents.length === 0 && !summary?.overall_summary) return null;
 
   return (
@@ -314,7 +332,7 @@ function DocumentSummaryPanel({ summary, loading, error, onStartChat, onQuestion
 
       {error && <div className="nbp-summary-error">⚠ {error}</div>}
 
-      {summary?.overall_summary && (
+      {showOverall && (
         <div className="nbp-overall-summary">
           <p>{summary.overall_summary}</p>
           {keyPoints.length > 0 && (
@@ -329,7 +347,9 @@ function DocumentSummaryPanel({ summary, loading, error, onStartChat, onQuestion
 
       {documents.length > 0 && (
         <div className="nbp-summary-grid" style={{ marginTop: 14 }}>
-          {documents.map((doc) => (
+          {documents.map((doc) => {
+            const docSummaryMatchesOverall = showOverall && doc.summary?.trim() && doc.summary.trim() === summary.overall_summary?.trim();
+            return (
             <div key={doc.id || doc.doc_id || doc.filename} className="nbp-doc-summary-card">
               <div className="nbp-doc-summary-top">
                 <div className="nbp-doc-summary-name">{doc.title || doc.filename}</div>
@@ -340,7 +360,7 @@ function DocumentSummaryPanel({ summary, loading, error, onStartChat, onQuestion
                 <span>{doc.page_count || 0} trang</span>
                 <span>{doc.chunk_count || 0} chunks</span>
               </div>
-              {doc.summary && <p className="nbp-doc-summary-text">{doc.summary}</p>}
+{doc.summary && !docSummaryMatchesOverall && <p className="nbp-doc-summary-text">{doc.summary}</p>}
               {Array.isArray(doc.key_points) && doc.key_points.length > 0 && (
                 <div className="nbp-key-points">
                   {doc.key_points.slice(0, 3).map((point, index) => (
@@ -349,7 +369,7 @@ function DocumentSummaryPanel({ summary, loading, error, onStartChat, onQuestion
                 </div>
               )}
             </div>
-          ))}
+          );})}
         </div>
       )}
 
@@ -368,7 +388,7 @@ function DocumentSummaryPanel({ summary, loading, error, onStartChat, onQuestion
 
       {documents.length > 0 && (
         <div className="nbp-summary-actions">
-          <button className="nbp-research-btn" onClick={onStartChat}>✦ Bắt đầu trò chuyện</button>
+          <button className="nbp-research-btn" disabled={!canStartResearch} onClick={onStartChat}>✦ Bắt đầu trò chuyện ({selectedDocumentIds.length})</button>
         </div>
       )}
     </div>
@@ -395,13 +415,28 @@ export default function NotebookPage() {
   const [summaryData, setSummaryData] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState('');
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
+  const [researchSessions, setResearchSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
 
   const fetchDocuments = async () => {
     if (!token) return;
     setLoadingDocs(true);
     try {
       const result = await api.getNotebookDocuments(notebookId, token);
-      setDocuments(result.documents ?? []);
+      const nextDocuments = result.documents ?? [];
+      const liveIds = new Set(nextDocuments.map((doc) => doc.doc_id));
+      setDocuments(nextDocuments);
+      setSelectedDocumentIds((prev) => prev.filter((id) => liveIds.has(id)));
+      setSummaryData((prev) => {
+        if (!prev) return prev;
+        if (nextDocuments.length === 0) return null;
+        return {
+          ...prev,
+          documents: (prev.documents || []).filter((doc) => liveIds.has(doc.doc_id || doc.id)),
+        };
+      });
+      return nextDocuments;
     } catch (err) {
       if (err.code === 'UNAUTHORIZED') { logoutContext(); return; }
     } finally {
@@ -428,10 +463,51 @@ export default function NotebookPage() {
     }
   };
 
-  const goToChat = (question = '') => {
+  const fetchResearchSessions = async () => {
+    if (!token) return;
+    setSessionsLoading(true);
+    try {
+      const result = await api.getResearchSessions(notebookId, token);
+      setResearchSessions(result.sessions || []);
+    } catch (err) {
+      console.warn('Không thể tải lịch sử nghiên cứu', err);
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const goToChat = async (question = '') => {
+    const validSelectedIds = selectedDocumentIds.filter((id) => documents.some((doc) => doc.doc_id === id));
+    if (validSelectedIds.length === 0) {
+      setUploadError('Vui lòng chọn ít nhất một tài liệu để nghiên cứu.');
+      return;
+    }
+    try {
+      const result = await api.createResearchSession(notebookId, validSelectedIds, token);
+      const session = result.session;
+      await fetchResearchSessions();
+      navigate(`/research/${notebookId}`, {
+        state: {
+          prefillQuestion: question,
+          suggestedQuestions: summaryData?.suggested_questions || [],
+          researchSessionId: session.id,
+          researchSession: session,
+          selectedDocumentIds: validSelectedIds,
+          selectedDocuments: documents.filter((doc) => validSelectedIds.includes(doc.doc_id)),
+        },
+      });
+    } catch (err) {
+      setUploadError(err.message || 'Không thể tạo phiên nghiên cứu.');
+    }
+  };
+
+  const openResearchSession = (session) => {
     navigate(`/research/${notebookId}`, {
       state: {
-        prefillQuestion: question,
+        researchSessionId: session.id,
+        researchSession: session,
+        selectedDocumentIds: session.selected_document_ids || [],
+        selectedDocuments: documents.filter((doc) => (session.selected_document_ids || []).includes(doc.doc_id)),
         suggestedQuestions: summaryData?.suggested_questions || [],
       },
     });
@@ -443,6 +519,7 @@ export default function NotebookPage() {
     if (saved) setNotebookName(saved);
     fetchDocuments();
     loadDocumentSummary(null, { generate: false });
+    fetchResearchSessions();
   }, [notebookId, token]);
 
   // ── Drag & Drop ──────────────────────────────────────────────────────────
@@ -463,14 +540,23 @@ export default function NotebookPage() {
     const invalid = newFiles.length - pdfs.length;
     const tooLarge = pdfs.filter(f => f.size > MAX_UPLOAD_BYTES);
     const validPdfs = pdfs.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    const existingNames = new Set(documents.map((doc) => normalizeFilename(doc.filename)));
     const messages = [];
     if (invalid > 0) messages.push(`${invalid} file không phải PDF đã bị bỏ qua.`);
     if (tooLarge.length > 0) messages.push(`${tooLarge.length} file vượt quá ${MAX_UPLOAD_MB}MB đã bị bỏ qua.`);
     if (messages.length > 0) setUploadError(messages.join(' '));
 
     setSelectedFiles(prev => {
-      const existing = new Set(prev.map(f => f.name));
-      const added = validPdfs.filter(f => !existing.has(f.name));
+      const existing = new Set(prev.map(f => normalizeFilename(f.name)));
+      const added = validPdfs.filter(f => {
+        const normalized = normalizeFilename(f.name);
+        if (existingNames.has(normalized)) {
+          messages.push('Tài liệu đã tồn tại trong notebook.');
+          return false;
+        }
+        return !existing.has(normalized);
+      });
+      if (messages.length > 0) setUploadError(Array.from(new Set(messages)).join(' '));
       return [...prev, ...added];
     });
   };
@@ -487,9 +573,10 @@ export default function NotebookPage() {
       setUploadResult(result);
       setSelectedFiles([]);
       const uploadedIds = (result.uploaded || []).map(doc => doc.doc_id).filter(Boolean);
-      await fetchDocuments();
+      const nextDocuments = await fetchDocuments();
       if (uploadedIds.length > 0) {
-        await loadDocumentSummary(uploadedIds, { generate: true });
+        setSelectedDocumentIds((prev) => Array.from(new Set([...prev, ...uploadedIds])));
+        await loadDocumentSummary(nextDocuments?.map((doc) => doc.doc_id) || null, { generate: true });
       } else {
         setSummaryData({ documents: result.failed || [], overall_summary: '', overall_key_points: [], suggested_questions: [] });
       }
@@ -505,13 +592,38 @@ export default function NotebookPage() {
     if (!window.confirm('Xóa tài liệu này?')) return;
     try {
       await api.deleteDocument(docId, token);
-      setDocuments(prev => prev.filter(d => d.doc_id !== docId));
+      setSelectedDocumentIds(prev => prev.filter(id => id !== docId));
+      setSummaryData(prev => prev ? {
+        ...prev,
+        documents: (prev.documents || []).filter(doc => (doc.doc_id || doc.id) !== docId),
+        suggested_questions: [],
+        overall_summary: '',
+        overall_key_points: [],
+      } : prev);
+      const nextDocuments = await fetchDocuments();
+      if (nextDocuments && nextDocuments.length > 0) {
+        await loadDocumentSummary(nextDocuments.map(doc => doc.doc_id), { generate: true });
+      } else {
+        setSummaryData(null);
+      }
+      await fetchResearchSessions();
     } catch {
       alert('Xóa thất bại!');
     }
   };
 
-  const canResearch = documents.length > 0;
+  const readyDocumentIds = new Set(documents.filter((doc) => (doc.status || 'ready') === 'ready').map((doc) => doc.doc_id));
+  const canResearch = selectedDocumentIds.length > 0 && selectedDocumentIds.every((id) => readyDocumentIds.has(id));
+  const allReadySelected = documents.length > 0 && documents.every((doc) => selectedDocumentIds.includes(doc.doc_id));
+  const selectedDocumentNames = documents.filter((doc) => selectedDocumentIds.includes(doc.doc_id)).map((doc) => doc.filename);
+
+  const toggleDocumentSelection = (docId) => {
+    setSelectedDocumentIds((prev) => prev.includes(docId) ? prev.filter((id) => id !== docId) : [...prev, docId]);
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedDocumentIds(allReadySelected ? [] : documents.filter((doc) => (doc.status || 'ready') === 'ready').map((doc) => doc.doc_id));
+  };
 
   return (
     <>
@@ -527,13 +639,15 @@ export default function NotebookPage() {
             className="nbp-research-btn"
             disabled={!canResearch}
             onClick={() => goToChat()}
-            title={canResearch ? 'Bắt đầu hỏi đáp' : 'Cần có ít nhất 1 tài liệu'}
+            title={canResearch ? `Nghiên cứu: ${selectedDocumentNames.join(', ')}` : 'Vui lòng tick ít nhất 1 tài liệu ready'}
           >
             ✦ Bắt đầu nghiên cứu
           </button>
         </header>
 
         <div className="nbp-content">
+          <div className="nbp-layout">
+            <main>
 
           {/* Upload section */}
           <div className="nbp-section">
@@ -633,6 +747,8 @@ export default function NotebookPage() {
             summary={summaryData}
             loading={summaryLoading}
             error={summaryError}
+            selectedDocumentIds={selectedDocumentIds}
+            canStartResearch={canResearch}
             onStartChat={() => goToChat()}
             onQuestionClick={goToChat}
           />
@@ -644,7 +760,10 @@ export default function NotebookPage() {
                 Tài liệu trong notebook
               </h2>
               {documents.length > 0 && (
-                <span className="nbp-docs-count">{documents.length} file</span>
+                <>
+                  <button className="nbp-select-all" onClick={toggleSelectAll}>{allReadySelected ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}</button>
+                  <span className="nbp-docs-count">{documents.length} file</span>
+                </>
               )}
             </div>
 
@@ -661,6 +780,13 @@ export default function NotebookPage() {
             ) : (
               documents.map(doc => (
                 <div key={doc.doc_id} className="nbp-doc-item">
+                  <input
+                    type="checkbox"
+                    className="nbp-doc-select"
+                    checked={selectedDocumentIds.includes(doc.doc_id)}
+                    onChange={() => toggleDocumentSelection(doc.doc_id)}
+                    aria-label={`Chọn ${doc.filename} để nghiên cứu`}
+                  />
                   <div className="nbp-doc-icon">📄</div>
                   <div className="nbp-doc-info">
                     <p className="nbp-doc-name">{doc.filename}</p>
@@ -684,6 +810,32 @@ export default function NotebookPage() {
                 </div>
               ))
             )}
+            {documents.length > 0 && (
+              <p className="nbp-selected-hint">Đã chọn {selectedDocumentIds.length} tài liệu: {selectedDocumentNames.join(', ') || 'chưa chọn tài liệu nào'}.</p>
+            )}
+          </div>
+            </main>
+
+            <aside className="nbp-section nbp-history-panel">
+              <h2 className="nbp-section-title">Lịch sử nghiên cứu</h2>
+              {sessionsLoading ? (
+                <div className="nbp-loading"><div className="nbp-spinner" /> Đang tải...</div>
+              ) : researchSessions.length === 0 ? (
+                <div className="nbp-empty" style={{ padding: 20 }}>
+                  <p className="nbp-empty-text">Chưa có cuộc nghiên cứu nào.</p>
+                  <p className="nbp-empty-sub">Tick tài liệu rồi bấm “Bắt đầu nghiên cứu”.</p>
+                </div>
+              ) : (
+                <div className="nbp-history-list">
+                  {researchSessions.map((session) => (
+                    <button key={session.id} className="nbp-history-item" onClick={() => openResearchSession(session)}>
+                      <span className="nbp-history-title">{session.title}</span>
+                      <span className="nbp-history-time">{new Date(session.updated_at || session.created_at).toLocaleString('vi-VN')}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </aside>
           </div>
 
         </div>

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr
 from pydantic.generics import GenericModel
-from typing import List, Optional, Literal, TypeVar, Generic
+from typing import List, Optional, Literal, TypeVar, Generic, Any
 from datetime import datetime
 
 T = TypeVar("T")
@@ -91,14 +91,19 @@ class DeleteDocumentResponse(BaseModel):
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
 class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
+    role: Literal["system", "user", "assistant"]
     content: str
+    id: Optional[str] = None
+    citations: Optional[List[dict[str, Any]]] = None
+    created_at: Optional[datetime] = None
 
 
 class AskRequest(BaseModel):
     notebook_id: str                                        # ← đổi từ doc_id → notebook_id
     question: str = Field(..., max_length=1000)
     chat_history: List[ChatMessage] = Field(default_factory=list, max_length=20)
+    selected_document_ids: List[str] = Field(default_factory=list, max_length=50)
+    research_session_id: Optional[str] = None
 
 
 class SourceChunk(BaseModel):

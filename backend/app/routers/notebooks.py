@@ -192,6 +192,34 @@ async def upload_documents(
             detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy notebook"},
         )
 
+    incoming_names = [((file.filename or "").strip().lower()) for file in files]
+    if len(incoming_names) != len(set(incoming_names)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DUPLICATE_DOCUMENT", "message": "Tài liệu đã tồn tại trong notebook."},
+        )
+
+    try:
+        existing_resp = supabase.table("documents").select("filename").eq("notebook_id", notebook_id).execute()
+    except Exception:
+        logger.exception("Supabase duplicate filename check failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra tài liệu trùng tên"},
+        )
+    existing_rows, existing_error = _supabase_response_data(existing_resp)
+    if existing_error:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi kiểm tra tài liệu trùng tên"},
+        )
+    existing_names = {(row.get("filename") or "").strip().lower() for row in existing_rows or []}
+    if any(name in existing_names for name in incoming_names):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "DUPLICATE_DOCUMENT", "message": "Tài liệu đã tồn tại trong notebook."},
+        )
+
     max_upload_mb = getattr(settings, "MAX_UPLOAD_MB", settings.MAX_FILE_SIZE_MB)
     max_size_bytes = max_upload_mb * 1024 * 1024
     results = []

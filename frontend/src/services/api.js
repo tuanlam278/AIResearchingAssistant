@@ -164,17 +164,42 @@ export const api = {
       axiosInstance.delete(`/api/notes/${noteId}`, { headers: authHeader(token) })
     ),
 
+  // ── RESEARCH SESSIONS ───────────────────────────────────────────────────────
+  getResearchSessions: (workspaceId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/workspaces/${workspaceId}/research-sessions`, { headers: authHeader(token) })
+    ),
+
+  createResearchSession: (workspaceId, selectedDocumentIds, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(
+        `/api/workspaces/${workspaceId}/research-sessions`,
+        { selected_document_ids: selectedDocumentIds },
+        { headers: authHeader(token) }
+      )
+    ),
+
+  getResearchSessionMessages: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/research-sessions/${sessionId}/messages`, { headers: authHeader(token) })
+    ),
+
+  clearResearchSessionMessages: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/research-sessions/${sessionId}/messages`, { headers: authHeader(token) })
+    ),
+
   // ── CHAT ─────────────────────────────────────────────────────────────────
-  sendResearchQuery: ({ notebookId, question, chatHistory = [] }, token, options = {}) =>
+  sendResearchQuery: ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, options = {}) =>
     unwrapRequest(() =>
       axiosInstance.post(
         "/api/chat/ask",
-        { notebook_id: notebookId, question, chat_history: chatHistory },
+        { notebook_id: notebookId, question, chat_history: chatHistory, selected_document_ids: selectedDocumentIds, research_session_id: researchSessionId },
         { headers: authHeader(token), signal: options.signal }
       )
     ),
 
-  streamResearchQuery: async ({ notebookId, question, chatHistory = [] }, token, callbacks = {}, options = {}) => {
+  streamResearchQuery: async ({ notebookId, question, chatHistory = [], selectedDocumentIds = [], researchSessionId = null }, token, callbacks = {}, options = {}) => {
     try {
       const response = await fetch(`${BASE_URL}/api/chat/ask/stream`, {
         method: "POST",
@@ -186,6 +211,8 @@ export const api = {
           notebook_id: notebookId,
           question,
           chat_history: chatHistory,
+          selected_document_ids: selectedDocumentIds,
+          research_session_id: researchSessionId,
         }),
         signal: options.signal,
       });
@@ -209,10 +236,12 @@ export const api = {
     const notebookId = workspaceId;
     const question = payload?.message || payload?.question || "";
     const chatHistory = payload?.chat_history || payload?.chatHistory || [];
+    const selectedDocumentIds = payload?.selected_document_ids || payload?.selectedDocumentIds || [];
+    const researchSessionId = payload?.research_session_id || payload?.researchSessionId || null;
 
     if (options.stream) {
       return api.streamResearchQuery(
-        { notebookId, question, chatHistory },
+        { notebookId, question, chatHistory, selectedDocumentIds, researchSessionId },
         options.token,
         options.callbacks,
         { signal: options.signal }
@@ -220,7 +249,7 @@ export const api = {
     }
 
     return api.sendResearchQuery(
-      { notebookId, question, chatHistory },
+      { notebookId, question, chatHistory, selectedDocumentIds, researchSessionId },
       options.token,
       { signal: options.signal }
     );

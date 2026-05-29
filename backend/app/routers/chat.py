@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,76 @@ from app.services.retriever import retrieve_chunks
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _supabase_response_data(resp):
+    if isinstance(resp, dict):
+        return resp.get("data"), resp.get("error")
+    return getattr(resp, "data", None), getattr(resp, "error", None)
+
+
+def _get_user_id(user: dict) -> str:
+    user_id = user.get("id") or user.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail=_make_error("UNAUTHORIZED", "Token không hợp lệ"))
+    return user_id
+
+
+def _validate_selected_documents(notebook_id: str, user_id: str, selected_document_ids: list[str]) -> list[str]:
+    if not selected_document_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=_make_error("NO_DOCUMENT_SELECTED", "Vui lòng chọn ít nhất một tài liệu để nghiên cứu."),
+        )
+
+    unique_ids = list(dict.fromkeys(str(doc_id) for doc_id in selected_document_ids if doc_id))
+    if not unique_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=_make_error("NO_DOCUMENT_SELECTED", "Vui lòng chọn ít nhất một tài liệu để nghiên cứu."),
+        )
+    try:
+        resp = (
+            supabase.table("documents")
+            .select("id, notebooks!inner(user_id)")
+            .eq("notebook_id", notebook_id)
+            .eq("notebooks.user_id", user_id)
+            .in_("id", unique_ids)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Selected document validation failed")
+        raise HTTPException(status_code=500, detail=_make_error("INTERNAL_ERROR", "Lỗi khi kiểm tra tài liệu")) from exc
+
+    rows, error = _supabase_response_data(resp)
+    if error:
+        raise HTTPException(status_code=500, detail=_make_error("INTERNAL_ERROR", "Lỗi khi kiểm tra tài liệu"))
+
+    existing_ids = [str(row["id"]) for row in rows or []]
+    if len(existing_ids) != len(unique_ids):
+        raise HTTPException(
+            status_code=400,
+            detail=_make_error("INVALID_SELECTED_DOCUMENTS", "Một hoặc nhiều tài liệu đã bị xóa hoặc không còn hợp lệ."),
+        )
+    return existing_ids
+
+
+def _persist_session_messages(session_id: str | None, user_content: str, assistant_content: str, citations: list[dict]) -> None:
+    if not session_id:
+        return
+    rows = [
+        {"research_session_id": session_id, "role": "user", "content": user_content, "citations": []},
+        {"research_session_id": session_id, "role": "assistant", "content": assistant_content, "citations": citations},
+    ]
+    try:
+        supabase.table("research_session_messages").insert(rows).execute()
+        supabase.table("research_sessions").update({"updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", session_id).execute()
+    except Exception as exc:  # pragma: no cover - persistence should not break answer delivery
+        logger.warning("Could not persist research session messages: %s", exc)
+
+
+def _sanitize_history(history):
+    return [msg for msg in history if msg.role in {"user", "assistant"}]
 
 
 def _make_error(code: str, message: str) -> dict:
@@ -80,6 +151,9 @@ async def ask(
     request: AskRequest,
     current_user: dict = Depends(get_current_user),
 ):
+    user_id = _get_user_id(current_user)
+    selected_document_ids = _validate_selected_documents(request.notebook_id, user_id, request.selected_document_ids)
+
     # 1. Embed câu hỏi
     try:
         query_vector = await embed_query(request.question)
@@ -91,7 +165,7 @@ async def ask(
         )
 
     # 2. Vector search theo notebook_id (tìm trên tất cả file trong notebook)
-    chunks = await retrieve_chunks(query_vector, request.notebook_id)
+    chunks = await retrieve_chunks(query_vector, request.notebook_id, selected_document_ids)
     if not chunks:
         raise HTTPException(
             status_code=404,
@@ -102,13 +176,15 @@ async def ask(
 
     # 3. Generate answer
     try:
-        answer = await generate_answer(request.question, chunks, request.chat_history)
+        answer = await generate_answer(request.question, chunks, _sanitize_history(request.chat_history))
     except Exception as e:
         print(f"[LLM ERROR] {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=500,
             detail=_make_error("LLM_FAILED", "Lỗi khi gọi LLM"),
         )
+
+    _persist_session_messages(request.research_session_id, request.question, answer["text"], citations)
 
     return {
         "success": True,
@@ -126,6 +202,9 @@ async def ask_stream(
     request: AskRequest,
     current_user: dict = Depends(get_current_user),
 ):
+    user_id = _get_user_id(current_user)
+    selected_document_ids = _validate_selected_documents(request.notebook_id, user_id, request.selected_document_ids)
+
     async def event_generator():
         try:
             yield _sse({"type": "status", "status": "reading", "message": "Đang đọc tài liệu..."})
@@ -138,7 +217,7 @@ async def ask_stream(
                 return
 
             yield _sse({"type": "status", "status": "retrieving", "message": "Đang tìm đoạn liên quan..."})
-            chunks = await retrieve_chunks(query_vector, request.notebook_id)
+            chunks = await retrieve_chunks(query_vector, request.notebook_id, selected_document_ids)
             if not chunks:
                 yield _sse({"type": "error", "code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu trong notebook"})
                 return
@@ -147,11 +226,14 @@ async def ask_stream(
             yield _sse({"type": "sources", "sources": citations, "citations": citations})
             yield _sse({"type": "status", "status": "generating", "message": "Đang tạo câu trả lời..."})
 
+            full_answer = ""
             async for token in generate_answer_stream(
-                request.question, chunks, request.chat_history
+                request.question, chunks, _sanitize_history(request.chat_history)
             ):
+                full_answer += token
                 yield _sse({"type": "token", "content": token})
 
+            _persist_session_messages(request.research_session_id, request.question, full_answer if "full_answer" in locals() else "", citations)
             yield _sse({"type": "done"})
 
         except asyncio.CancelledError:
