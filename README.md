@@ -73,3 +73,21 @@ npm run dev
 - Upload supports PDF, DOCX, TXT and MD for RAG indexing. Legacy `.doc` and `.rtf` uploads are rejected with clear conversion guidance.
 - Research sessions can be exported as DOCX via `GET /api/research-sessions/{session_id}/export.docx`.
 - Flashcards are generated with Groq through `POST /api/research-sessions/{session_id}/flashcards/generate` and require `GROQ_API_KEY` plus optional `GROQ_FLASHCARD_MODEL`.
+
+## Google login / Google account linking
+
+This app verifies Google Identity Services ID tokens in the FastAPI backend and then issues an app-owned session token. It does **not** require enabling the Supabase Google/OIDC provider for the `/api/auth/google` backend flow.
+
+Required configuration:
+
+1. Create an OAuth 2.0 Web Client in Google Cloud Console.
+2. Add authorized JavaScript origins, for example:
+   - `http://localhost:5173`
+   - your production frontend URL
+3. Set the same client ID in both environments:
+   - frontend: `VITE_GOOGLE_CLIENT_ID=<google-web-client-id>`
+   - backend: `GOOGLE_CLIENT_ID=<google-web-client-id>`
+4. Generate a strong backend session secret and set `JWT_SECRET_KEY` in the backend environment. Do not hardcode or commit the real value.
+5. Run `docs/sql/profile_google_auth.sql` in Supabase SQL editor so `profiles.google_id` is unique and the optional `google_email` / `google_avatar_url` fields exist.
+
+If you intentionally switch back to Supabase Auth provider based Google sign-in, also enable Google in Supabase Dashboard → Authentication → Providers, enter the Google Client ID/Secret, and add the Supabase callback URL (`https://<project-ref>.supabase.co/auth/v1/callback`) to Google Cloud OAuth redirect URIs. Otherwise Supabase may return: `Provider (issuer "https://accounts.google.com") is not enabled`.

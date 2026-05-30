@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Outlet } from 'react-router-dom';
 import LeftSidebar from '../components/layout/LeftSidebar';
 
@@ -30,23 +31,36 @@ const STYLES = `
     box-shadow: 0 12px 40px rgba(0,0,0,0.35);
   }
   .app-shell__scrim { display: none; }
+  .app-shell__scrim.is-open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0,0,0,0.58);
+    backdrop-filter: blur(4px);
+  }
   @media (max-width: 900px) {
     .app-shell__main, .app-shell.is-collapsed .app-shell__main { margin-left: 0; }
     .app-shell__mobile-toggle { display: inline-flex; align-items: center; justify-content: center; }
-    .app-shell__scrim.is-open {
-      display: block;
-      position: fixed;
-      inset: 0;
-      z-index: 55;
-      background: rgba(0,0,0,0.58);
-      backdrop-filter: blur(4px);
-    }
   }
 `;
 
 export default function AppShell() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setMobileOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileOpen]);
+
+  const mobileScrim = mobileOpen
+    ? createPortal(<div className="app-shell__scrim is-open" onClick={() => setMobileOpen(false)} />, document.body)
+    : null;
 
   return (
     <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
@@ -59,14 +73,14 @@ export default function AppShell() {
       >
         ☰
       </button>
-      <div className={`app-shell__scrim ${mobileOpen ? 'is-open' : ''}`} onClick={() => setMobileOpen(false)} />
+      {mobileScrim}
       <LeftSidebar
         collapsed={collapsed}
         mobileOpen={mobileOpen}
         onToggleCollapsed={() => setCollapsed((value) => !value)}
         onCloseMobile={() => setMobileOpen(false)}
       />
-      <main className="app-shell__main">
+      <main className="app-shell__main app-scrollbar">
         <Outlet />
       </main>
     </div>

@@ -2,25 +2,72 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-.app-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.06) transparent;
+
+:root {
+  --app-scrollbar-thumb: rgba(255, 255, 255, 0.06);
+  --app-scrollbar-thumb-hover: rgba(255, 255, 255, 0.14);
+  --app-scrollbar-track: transparent;
 }
 
-.app-scrollbar::-webkit-scrollbar {
+html,
+body,
+.app-scrollbar,
+.rp-app-scrollbar,
+[class~="overflow-y-auto"],
+[class~="overflow-auto"],
+textarea,
+.modal,
+.drawer {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.app-scrollbar::-webkit-scrollbar,
+.rp-app-scrollbar::-webkit-scrollbar,
+[class~="overflow-y-auto"]::-webkit-scrollbar,
+[class~="overflow-auto"]::-webkit-scrollbar,
+textarea::-webkit-scrollbar,
+.modal::-webkit-scrollbar,
+.drawer::-webkit-scrollbar {
   width: 3px;
   height: 3px;
 }
 
-.app-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+.app-scrollbar::-webkit-scrollbar-track,
+.rp-app-scrollbar::-webkit-scrollbar-track,
+[class~="overflow-y-auto"]::-webkit-scrollbar-track,
+[class~="overflow-auto"]::-webkit-scrollbar-track,
+textarea::-webkit-scrollbar-track,
+.modal::-webkit-scrollbar-track,
+.drawer::-webkit-scrollbar-track {
+  background: var(--app-scrollbar-track);
 }
 
-.app-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.06);
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+.app-scrollbar::-webkit-scrollbar-thumb,
+.rp-app-scrollbar::-webkit-scrollbar-thumb,
+[class~="overflow-y-auto"]::-webkit-scrollbar-thumb,
+[class~="overflow-auto"]::-webkit-scrollbar-thumb,
+textarea::-webkit-scrollbar-thumb,
+.modal::-webkit-scrollbar-thumb,
+.drawer::-webkit-scrollbar-thumb {
+  background: var(--app-scrollbar-thumb);
   border-radius: 999px;
 }
 
-.app-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+.app-scrollbar::-webkit-scrollbar-thumb:hover,
+.rp-app-scrollbar::-webkit-scrollbar-thumb:hover,
+[class~="overflow-y-auto"]::-webkit-scrollbar-thumb:hover,
+[class~="overflow-auto"]::-webkit-scrollbar-thumb:hover,
+textarea::-webkit-scrollbar-thumb:hover,
+.modal::-webkit-scrollbar-thumb:hover,
+.drawer::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-hover);
 }

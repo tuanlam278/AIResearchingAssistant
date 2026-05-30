@@ -7,6 +7,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.config import settings
 from app.db.supabase_client import supabase
+from app.services.internal_jwt_service import verify_app_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 DEV_ADMIN_TOKEN = "dev-admin-token"
@@ -59,6 +60,15 @@ async def get_current_user(
     token = credentials.credentials
     if token == DEV_ADMIN_TOKEN:
         return {"user_id": "dev-admin", "id": "dev-admin", "email": settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin", "role": "admin"}
+
+    app_claims = verify_app_access_token(token)
+    if app_claims:
+        return {
+            "user_id": str(app_claims["sub"]),
+            "id": str(app_claims["sub"]),
+            "email": str(app_claims["email"]),
+            "role": str(app_claims.get("role") or "user"),
+        }
 
     try:
         resp: Any = supabase.auth.get_user(token)

@@ -1,45 +1,57 @@
 /**
- * FE1 implement: Auth Context
- * Lưu token + user, chia sẻ cho toàn bộ app.
- * Wrap <App /> bằng <AuthProvider> trong main.jsx.
+ * Auth Context: stores Supabase access token + current user for the app.
+ * Token is persisted in localStorage so refreshes keep the session.
  */
-import { createContext, useState, useContext } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 
-// 1. Khởi tạo Context
 const AuthContext = createContext();
+const TOKEN_KEY = 'ai-research-access-token';
+const USER_KEY = 'ai-research-user';
 
-// 2. Tạo Provider để bọc toàn bộ App
 export const AuthProvider = ({ children }) => {
-  // Lưu trữ trạng thái xác thực trên RAM (biến state)
   const [token, setToken] = useState(null);
   const [user, setUser] = useState(null);
   const [isReady, setIsReady] = useState(false);
 
-  // Hàm được gọi khi LoginPage.jsx đăng nhập thành công
+  useEffect(() => {
+    const savedToken = localStorage.getItem(TOKEN_KEY);
+    const savedUser = localStorage.getItem(USER_KEY);
+    if (savedToken) setToken(savedToken);
+    if (savedUser) {
+      try { setUser(JSON.parse(savedUser)); } catch { localStorage.removeItem(USER_KEY); }
+    }
+    setIsReady(true);
+  }, []);
+
   const loginContext = (newToken, userData) => {
     setToken(newToken);
     setUser(userData);
+    localStorage.setItem(TOKEN_KEY, newToken);
+    localStorage.setItem(USER_KEY, JSON.stringify(userData || null));
     setIsReady(true);
   };
 
-  // Hàm được gọi khi bấm nút Đăng xuất ở HomePage.jsx hoặc khi token hết hạn (lỗi 401)
+  const updateUserContext = (userData) => {
+    setUser(userData);
+    localStorage.setItem(USER_KEY, JSON.stringify(userData || null));
+  };
+
   const logoutContext = () => {
     setToken(null);
     setUser(null);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
   };
 
   return (
-    <AuthContext.Provider value={{ token, user, isReady, loginContext, logoutContext }}>
+    <AuthContext.Provider value={{ token, user, isReady, loginContext, logoutContext, updateUserContext }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-// 3. Custom hook để các component con gọi ra xài cho gọn (thay vì phải import useContext và AuthContext lắt nhắt)
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth phải được sử dụng bên trong AuthProvider");
-  }
+  if (!context) throw new Error('useAuth phải được sử dụng bên trong AuthProvider');
   return context;
 };

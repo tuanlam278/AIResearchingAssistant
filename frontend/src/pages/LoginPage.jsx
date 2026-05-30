@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, Link, Navigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -9,9 +9,47 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  const [googleReady, setGoogleReady] = useState(false);
+  const googleButtonRef = useRef(null);
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
   const navigate = useNavigate();
   const { token, user, loginContext } = useAuth();
+  useEffect(() => {
+    if (!googleClientId) return;
+    const existingScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    const onLoad = () => setGoogleReady(true);
+    if (window.google?.accounts?.id) { onLoad(); return; }
+    const script = existingScript || document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = onLoad;
+    if (!existingScript) document.body.appendChild(script);
+  }, [googleClientId]);
+
+  useEffect(() => {
+    if (!googleReady || !googleClientId || !googleButtonRef.current || !window.google?.accounts?.id) return;
+    window.google.accounts.id.initialize({
+      client_id: googleClientId,
+      callback: async ({ credential }) => {
+        if (!credential) return;
+        setError('');
+        setLoading(true);
+        try {
+          const response = await api.loginWithGoogle(credential);
+          loginContext(response.access_token, response.user);
+          navigate('/home', { replace: true });
+        } catch (err) {
+          setError(err.message || 'Không thể xác thực Google.');
+        } finally {
+          setLoading(false);
+        }
+      },
+    });
+    window.google.accounts.id.renderButton(googleButtonRef.current, { theme: 'outline', size: 'large', width: 340, text: 'signin_with' });
+  }, [googleReady, googleClientId, loginContext, navigate]);
+
   if (token) return <Navigate to={user?.role === 'admin' ? '/admin' : '/home'} replace />;
 
   const handleLogin = async (e) => {
@@ -96,6 +134,10 @@ export default function LoginPage() {
           background: rgba(255,255,255,0.06);
           margin-bottom: 28px;
         }
+        .auth-google { margin: 0 0 20px; display:flex; justify-content:center; min-height: 44px; }
+        .auth-google-note { color:#6a6050; font-size:12px; text-align:center; margin-bottom:18px; }
+        .auth-or { display:flex; align-items:center; gap:12px; color:#5a5040; font-size:12px; margin: 12px 0 20px; }
+        .auth-or::before, .auth-or::after { content:''; height:1px; flex:1; background:rgba(255,255,255,.07); }
 
         .auth-field { margin-bottom: 18px; }
         .auth-label {
@@ -229,6 +271,14 @@ export default function LoginPage() {
 
           <div className="auth-divider" />
 
+          {googleClientId ? (
+            <div className="auth-google" ref={googleButtonRef} aria-label="Đăng nhập bằng Google" />
+          ) : (
+            <p className="auth-google-note">Google Login cần cấu hình VITE_GOOGLE_CLIENT_ID.</p>
+          )}
+
+          <div className="auth-or">hoặc đăng nhập bằng email</div>
+
           {error && (
             <div className="auth-error">
               ⚠ {error}
@@ -277,6 +327,10 @@ export default function LoginPage() {
               {loading ? 'Đang đăng nhập...' : 'Đăng nhập'}
             </button>
           </form>
+
+          <p className="auth-footer" style={{ marginTop: 14 }}>
+            <Link to="/forgot-password">Quên mật khẩu?</Link>
+          </p>
 
           <p className="auth-footer">
             Chưa có tài khoản?{' '}

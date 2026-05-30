@@ -27,6 +27,8 @@ class ErrorResponse(BaseModel):
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
+    confirm_password: Optional[str] = Field(default=None, min_length=6)
+    name: Optional[str] = Field(default=None, max_length=160)
 
 
 class UserInfo(BaseModel):

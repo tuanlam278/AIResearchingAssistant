@@ -5,6 +5,7 @@ import { api } from '../services/api';
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
@@ -13,7 +14,10 @@ export default function RegisterPage() {
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    if (!password) { setError('Vui lòng nhập mật khẩu.'); return; }
+    if (!confirmPassword) { setError('Vui lòng nhập lại mật khẩu.'); return; }
     if (password.length < 6) { setError('Mật khẩu phải có ít nhất 6 ký tự.'); return; }
+    if (password !== confirmPassword) { setError('Mật khẩu nhập lại không khớp.'); return; }
     setError('');
     setLoading(true);
     try {
@@ -21,7 +25,7 @@ export default function RegisterPage() {
       setDone(true);
       setTimeout(() => navigate('/login'), 2200);
     } catch (err) {
-      if (err.message === 'EMAIL_TAKEN') setError('Email này đã được sử dụng.');
+      if (err.code === 'EMAIL_TAKEN' || err.message === 'EMAIL_TAKEN') setError('Email này đã được sử dụng.');
       else setError('Có lỗi xảy ra khi đăng ký. Vui lòng thử lại.');
     } finally {
       setLoading(false);
@@ -252,6 +256,21 @@ export default function RegisterPage() {
                     </button>
                   </div>
                   <p className="auth-hint">Tối thiểu 6 ký tự</p>
+                </div>
+
+                <div className="auth-field">
+                  <label className="auth-label">Nhập lại mật khẩu</label>
+                  <div className="auth-input-wrap">
+                    <input
+                      className="auth-input auth-input-pass"
+                      type={showPass ? 'text' : 'password'}
+                      required
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      placeholder="Nhập lại mật khẩu"
+                      autoComplete="new-password"
+                    />
+                  </div>
                 </div>
 
                 <button type="submit" className="auth-btn" disabled={loading}>

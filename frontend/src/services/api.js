@@ -191,6 +191,73 @@ export const api = {
   logout: (token) =>
     unwrapRequest(() => axiosInstance.post("/api/auth/logout", {}, { headers: authHeader(token) })),
 
+
+  loginWithGoogle: (credential) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/google", { credential })),
+
+  requestPasswordResetOtp: (email) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/request", { email })),
+
+  verifyPasswordResetOtp: (email, otp) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/verify", { email, otp })),
+
+  confirmPasswordResetWithOtp: (email, otp, newPassword) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/confirm", { email, otp, new_password: newPassword })),
+
+  requestPasswordReset: (email) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/request", { email })),
+
+  getProfile: (token) =>
+    unwrapRequest(() => axiosInstance.get("/api/profile/me", { headers: authHeader(token) })),
+
+  updateProfile: (payload, token) =>
+    unwrapRequest(() => axiosInstance.patch("/api/profile/me", payload, { headers: authHeader(token) })),
+
+  uploadAvatar: (file, token, onProgress) => {
+    const formData = new FormData();
+    formData.append("avatar", file);
+    return unwrapRequest(() => axiosInstance.post("/api/profile/avatar", formData, {
+      headers: { ...authHeader(token) },
+      onUploadProgress: (e) => onProgress?.(e.total ? Math.round((e.loaded * 100) / e.total) : 0),
+    }));
+  },
+
+  changePassword: (payload, token) =>
+    unwrapRequest(() => axiosInstance.post("/api/profile/change-password", payload, { headers: authHeader(token) })),
+
+  enableEmail2fa: (token) =>
+    unwrapRequest(() => axiosInstance.post("/api/profile/2fa/email/enable", {}, { headers: authHeader(token) })),
+
+  disableEmail2fa: (token) =>
+    unwrapRequest(() => axiosInstance.post("/api/profile/2fa/email/disable", {}, { headers: authHeader(token) })),
+
+  connectGoogle: (credential, token) =>
+    unwrapRequest(() => axiosInstance.post("/api/profile/social/google/connect", { credential }, { headers: authHeader(token) })),
+
+  disconnectGoogle: (token) =>
+    unwrapRequest(() => axiosInstance.post("/api/profile/social/google/disconnect", {}, { headers: authHeader(token) })),
+
+  updatePreferences: (payload, token) =>
+    unwrapRequest(() => axiosInstance.patch("/api/profile/preferences", payload, { headers: authHeader(token) })),
+
+  getProfileActivity: (token) =>
+    unwrapRequest(() => axiosInstance.get("/api/profile/activity", { headers: authHeader(token) })),
+
+  exportProfileData: async (token) => {
+    try {
+      const response = await axiosInstance.get("/api/profile/export-data", { headers: authHeader(token), responseType: "blob" });
+      return getBlobResponse(response, `user-data-${new Date().toISOString().slice(0, 10)}.json`);
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
+
+  deactivateAccount: (token) =>
+    unwrapRequest(() => axiosInstance.post("/api/profile/deactivate", {}, { headers: authHeader(token) })),
+
+  deleteAccount: (token) =>
+    unwrapRequest(() => axiosInstance.delete("/api/profile/account", { headers: authHeader(token) })),
+
   // ── NOTEBOOKS ─────────────────────────────────────────────────────────────
   getNotebooks: (token) =>
     unwrapRequest(() => axiosInstance.get("/api/notebooks", { headers: authHeader(token) })),

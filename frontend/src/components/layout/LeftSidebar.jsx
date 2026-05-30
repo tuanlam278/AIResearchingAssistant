@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck, GitCompare, SearchCheck } from 'lucide-react';
+import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck, GitCompare, SearchCheck, UserCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 
@@ -47,6 +47,8 @@ const STYLES = `
     box-shadow: 22px 0 60px rgba(0,0,0,0.35);
     transition: width 0.2s ease, transform 0.22s ease;
     font-family: 'Lora', Georgia, serif;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   .left-sidebar.is-collapsed { width: 92px; }
   .left-sidebar__brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 12px; min-height: 54px; }
@@ -59,8 +61,9 @@ const STYLES = `
     color: #1a1510;
     background: linear-gradient(135deg, #f2d48b, #a8792f);
     box-shadow: 0 10px 30px rgba(196,164,100,0.28);
-    flex-shrink: 0;
+    flex-shrink: 0; overflow:hidden;
   }
+  .left-sidebar__avatar img { width:100%; height:100%; object-fit:cover; display:block; }
   .left-sidebar__title { min-width: 0; }
   .left-sidebar__title strong { display: block; color: #f2eadb; font-family: 'Lora', Georgia, serif; font-size: 17px; line-height: 1.15; }
   .left-sidebar__title span { display: block; color: #8a8070; font-size: 12px; margin-top: 3px; }
@@ -70,11 +73,13 @@ const STYLES = `
     display: inline-flex; align-items: center; justify-content: center;
   }
   .left-sidebar__collapse:hover { color: #d6c28b; border-color: rgba(196,164,100,0.25); }
-  .left-sidebar.is-collapsed .left-sidebar__title, .left-sidebar.is-collapsed .left-sidebar__item-text, .left-sidebar.is-collapsed .left-sidebar__user-meta, .left-sidebar.is-collapsed .left-sidebar__logout span { display: none; }
-  .left-sidebar.is-collapsed .left-sidebar__brand, .left-sidebar.is-collapsed .left-sidebar__nav-link { justify-content: center; }
+  .left-sidebar.is-collapsed .left-sidebar__title, .left-sidebar.is-collapsed .left-sidebar__item-text, .left-sidebar.is-collapsed .left-sidebar__user-meta, .left-sidebar.is-collapsed .left-sidebar__logout span, .left-sidebar.is-collapsed .left-sidebar__section-label { display: none; }
+  .left-sidebar.is-collapsed .left-sidebar__brand, .left-sidebar.is-collapsed .left-sidebar__brand-home, .left-sidebar.is-collapsed .left-sidebar__nav-link, .left-sidebar.is-collapsed .left-sidebar__user { justify-content: center; }
+  .left-sidebar.is-collapsed .left-sidebar__brand { padding-left: 0; padding-right: 0; }
+  .left-sidebar.is-collapsed .left-sidebar__nav-link { align-items: center; padding-left: 0; padding-right: 0; }
+  .left-sidebar.is-collapsed .left-sidebar__nav-link svg { margin-top: 0; }
   .left-sidebar.is-collapsed .left-sidebar__collapse { position: absolute; right: -14px; top: 28px; background: #1b1711; transform: rotate(180deg); }
   .left-sidebar__section-label { color: #5a5040; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 0 10px; }
-  .left-sidebar.is-collapsed .left-sidebar__section-label { text-align: center; padding: 0; font-size: 10px; }
   .left-sidebar__nav { display: flex; flex-direction: column; gap: 8px; }
   .left-sidebar__nav-link {
     position: relative;
@@ -107,17 +112,20 @@ const STYLES = `
     background: rgba(255,255,255,0.035);
     border: 1px solid rgba(255,255,255,0.07);
   }
+  .left-sidebar__profile-link { width:100%; text-align:left; cursor:pointer; color:inherit; }
+  .left-sidebar__profile-link:hover { border-color: rgba(196,164,100,0.22); background: rgba(196,164,100,0.06); }
   .left-sidebar__avatar {
     width: 38px; height: 38px; border-radius: 13px;
     display: grid; place-items: center;
     background: rgba(196,164,100,0.12);
     border: 1px solid rgba(196,164,100,0.18);
     color: #e8cb82; font-weight: 700;
-    flex-shrink: 0;
+    flex-shrink: 0; overflow:hidden;
   }
+  .left-sidebar__avatar img { width:100%; height:100%; object-fit:cover; display:block; }
   .left-sidebar__user-meta { min-width: 0; }
   .left-sidebar__user-meta strong { display: block; color: #efe6d4; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .left-sidebar__user-meta span { display: block; color: #6d6354; font-size: 11px; margin-top: 2px; }
+  .left-sidebar__user-meta span { display: flex; align-items:center; gap:4px; color: #6d6354; font-size: 11px; margin-top: 2px; }
   .left-sidebar__logout {
     display: flex; align-items: center; justify-content: center; gap: 8px;
     width: 100%; min-height: 40px;
@@ -141,7 +149,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
   const { token, user, logoutContext } = useAuth();
   const navigate = useNavigate();
   const email = user?.email || 'researcher@local';
-  const initial = email.trim().charAt(0).toUpperCase();
+  const initial = (user?.name || email).trim().charAt(0).toUpperCase();
   const navItems = user?.role === 'admin' ? [...NAV_ITEMS, { to: '/admin', icon: ShieldCheck, label: 'Quản trị', description: 'Import và quản lý tài liệu Thư viện Hệ thống.' }] : NAV_ITEMS;
 
 
@@ -152,7 +160,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
   };
 
   return (
-    <aside className={`left-sidebar ${collapsed ? 'is-collapsed' : ''} ${mobileOpen ? 'is-mobile-open' : ''}`}>
+    <aside className={`left-sidebar app-scrollbar ${collapsed ? 'is-collapsed' : ''} ${mobileOpen ? 'is-mobile-open' : ''}`}>
       <style>{STYLES}</style>
       <div className="left-sidebar__brand">
         <button type="button" className="left-sidebar__brand-home" onClick={() => { navigate('/home'); onCloseMobile?.(); }} aria-label="Về trang chủ">
@@ -189,13 +197,13 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
 
 
       <div className="left-sidebar__spacer" />
-      <div className="left-sidebar__user" title={collapsed ? email : undefined}>
-        <div className="left-sidebar__avatar">{initial}</div>
+      <button type="button" className="left-sidebar__user left-sidebar__profile-link" title={collapsed ? email : 'Mở hồ sơ cá nhân'} onClick={() => { navigate('/profile'); onCloseMobile?.(); }}>
+        <div className="left-sidebar__avatar">{user?.avatar_url ? <img src={user.avatar_url} alt="Avatar" /> : initial}</div>
         <div className="left-sidebar__user-meta">
-          <strong>{email}</strong>
-          <span>{user?.role === 'admin' ? 'Admin' : 'User'}</span>
+          <strong>{user?.name || email}</strong>
+          <span><UserCircle size={12} /> Hồ sơ cá nhân · {user?.role === 'admin' ? 'Admin' : 'User'}</span>
         </div>
-      </div>
+      </button>
       <button type="button" className="left-sidebar__logout" onClick={handleLogout}>
         <LogOut size={16} /> <span>Đăng xuất</span>
       </button>
