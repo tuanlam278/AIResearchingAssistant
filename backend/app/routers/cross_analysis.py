@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
-from app.services.cross_analysis_service import chat_about_documents, compare_documents, detect_conflicts, synthesize_documents, upload_temp_document
+from app.services.cross_analysis_service import chat_about_documents, compare_documents, detect_conflicts, get_document_preview, synthesize_documents, upload_temp_document
 
 router = APIRouter(tags=["cross-analysis"])
 
@@ -68,4 +68,17 @@ async def synthesize_cross_analysis_documents(body: TwoDocumentRequest, user: di
 async def chat_cross_analysis_documents(body: ChatRequest, user: dict = Depends(get_current_user)):
     _ = user
     result = await chat_about_documents(body.document_a.model_dump(), body.document_b.model_dump(), body.message, body.chat_history)
+    return {"success": True, "data": result}
+
+
+@router.post("/chat/clear", response_model=dict)
+async def clear_cross_analysis_chat(body: TwoDocumentRequest, user: dict = Depends(get_current_user)):
+    _ = (body, user)
+    return {"success": True, "data": {"cleared": True}}
+
+
+@router.get("/documents/{document_id}/preview", response_model=dict)
+async def preview_cross_analysis_document(document_id: str, user: dict = Depends(get_current_user)):
+    _ = user
+    result = get_document_preview(document_id)
     return {"success": True, "data": result}

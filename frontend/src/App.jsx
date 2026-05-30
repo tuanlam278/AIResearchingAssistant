@@ -9,6 +9,8 @@ import RegisterPage from './pages/RegisterPage';
 import SystemLibraryPage from './pages/SystemLibraryPage';
 import AdminPage from './pages/AdminPage';
 import CrossAnalysisPage from './pages/CrossAnalysisPage';
+import AcademicLensPage from './pages/AcademicLensPage';
+import HomePage from './pages/HomePage';
 
 const ProtectedRoute = ({ children }) => {
   const { token, isReady } = useAuth();
@@ -21,7 +23,7 @@ const AdminRoute = ({ children }) => {
   const { token, user, isReady } = useAuth();
   if (!isReady && !token) return <Navigate to="/login" replace />;
   if (isReady && !token) return <Navigate to="/login" replace />;
-  if (user?.role !== 'admin') return <Navigate to="/" replace />;
+  if (user?.role !== 'admin') return <Navigate to="/home" replace />;
   return children;
 };
 
@@ -41,16 +43,18 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/" element={<NotebooksPage />} />
-            <Route path="/notebook" element={<Navigate to="/" replace />} />
+            <Route path="/" element={<Navigate to="/home" replace />} />
+            <Route path="/home" element={<HomePage />} />
+            <Route path="/notebook" element={<NotebooksPage />} />
             <Route path="/notebooks/:notebookId" element={<NotebookPage />} />
             <Route path="/research/:notebookId" element={<ResearchPage />} />
-            <Route path="/system-library" element={<SystemLibraryPage />} />
+            <Route path="/academic-lens" element={<AcademicLensPage />} />
             <Route path="/cross-analysis" element={<CrossAnalysisPage />} />
+            <Route path="/system-library" element={<SystemLibraryPage />} />
             <Route path="/admin" element={<AdminRoute><AdminPage /></AdminRoute>} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/" />} />
+          <Route path="*" element={<Navigate to="/home" />} />
 
         </Routes>
       </BrowserRouter>

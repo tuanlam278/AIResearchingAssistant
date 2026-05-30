@@ -42,51 +42,35 @@ def _build_messages(
     *,
     allow_general_answer: bool = False,
 ) -> list:
-    """
-    Xây dựng mảng messages array theo định dạng OpenAI-compatible phục vụ cho Groq API.
-    
-    Hàm này tích hợp cấu trúc phân tầng dữ liệu kết hợp với cơ chế cắt tỉa ngữ cảnh động 
-    (Dynamic Context Trimming) để ngăn chặn lỗi tràn cửa sổ ngữ cảnh (Context Window Exceeded) 
-    và tận dụng metadata 'section' nhằm cung cấp thông tin định vị chính xác cho mô hình lớn.
-
-    Chiến lược quản lý token:
-    1. Ước tính phần cố định gồm System Prompt cơ sở và câu hỏi hiện tại của người dùng.
-    2. Duyệt qua các văn bản trích dẫn (chunks), trích xuất metadata trang và phân đoạn tài liệu 
-       (section), tự động dừng thêm nếu vượt quá giới hạn an toàn dành cho chunk.
-    3. Duyệt ngược lịch sử hội thoại (từ mới nhất lùi về cũ nhất) để bù lấp khoảng trống token 
-       cho đến khi tiệm cận ngưỡng tối đa `MAX_PROMPT_TOKENS`.
-
-    Args:
-        question (str): Câu hỏi hiện tại do người dùng nhập vào.
-        chunks (List[dict]): Danh sách các phân đoạn tương đồng thu thập từ Supabase RPC.
-            Mỗi dictionary yêu cầu có các khóa: 'page_number', 'section', và 'content'.
-        chat_history (List[ChatMessage]): Toàn bộ lịch sử cuộc trò chuyện hiện tại.
-
-    Returns:
-        list: Danh sách các dict tin nhắn cấu trúc dạng [{"role": str, "content": str}]
-    """
-    # 1. Khởi tạo System Prompt cơ bản
-    base_system_prompt = (
-        "Bạn là trợ lý nghiên cứu AI, giúp người dùng hiểu tài liệu học thuật.\n"
-        "Trả lời câu hỏi dựa trên các đoạn trích sau từ tài liệu.\n"
-        "Nếu câu hỏi đi xa khỏi tài liệu nhưng hệ thống đã bật chế độ trả lời mở rộng, "
-        "hãy trả lời bằng kiến thức chung một cách thận trọng và không bịa trích dẫn.\n"
-        "Nếu không tìm thấy câu trả lời trong tài liệu và không đủ kiến thức chung, hãy nói rõ "
-        '"Tôi không tìm thấy thông tin này trong tài liệu".\n'
-        "Trả lời bằng ngôn ngữ của câu hỏi (tiếng Việt hoặc tiếng Anh).\n"
-        "Khi dùng thông tin từ đoạn trích, hãy trích dẫn bằng chỉ số nguồn dạng [1], [2] ngay sau ý liên quan.\n\n"
-        "--- Đoạn trích từ tài liệu ---\n"
-    )
+    # 1. Khởi tạo System Prompt cơ bản theo chế độ
+    if allow_general_answer:
+        base_system_prompt = (
+            "Bạn là trợ lý nghiên cứu AI, giúp người dùng hiểu tài liệu học thuật.\n"
+            "Trả lời câu hỏi dựa trên các đoạn trích sau từ tài liệu.\n"
+            "Lưu ý: Hệ thống cho phép sử dụng kiến thức chung. Nếu câu hỏi nằm ngoài tài liệu được cung cấp, "
+            "bạn có thể trả lời bằng kiến thức chung nhưng PHẢI nói rõ phần nào là thông tin ngoài tài liệu.\n"
+            "Khi dùng thông tin từ đoạn trích, trích dẫn dạng [1], [2].\n\n"
+            "--- Đoạn trích từ tài liệu ---\n"
+        )
+    else:
+        base_system_prompt = (
+            "Bạn là trợ lý nghiên cứu AI. Nhiệm vụ của bạn là trả lời câu hỏi CHỈ DỰA VÀO các đoạn trích tài liệu bên dưới.\n"
+            "--- QUY TẮC NGHIÊM NGẶT ---\n"
+            "1. TUYỆT ĐỐI KHÔNG sử dụng kiến thức bên ngoài, KHÔNG tự suy diễn hay thêm thắt thông tin.\n"
+            "2. Nếu tài liệu bên dưới không chứa nội dung để trả lời, bạn PHẢI trả lời chính xác câu này: 'Tôi không tìm thấy thông tin này trong tài liệu'.\n"
+            "3. Trả lời bằng ngôn ngữ của câu hỏi (tiếng Việt hoặc tiếng Anh).\n"
+            "4. Bắt buộc trích dẫn nguồn dạng [1], [2] tương ứng với đoạn trích được cung cấp.\n\n"
+            "--- Đoạn trích từ tài liệu ---\n"
+        )
     
     # Tính toán lượng token cố định ban đầu (System + Question)
     current_tokens = _count_tokens(base_system_prompt) + _count_tokens(question)
     
-    # 2. Xử lý Chunks (Giữ lại các chunk top đầu, cắt bớt chunk cuối nếu quá dài)
+    # 2. Xử lý Chunks... (GIỮ NGUYÊN CODE CŨ CỦA BẠN ĐẾN HẾT VÒNG LẶP FOR)
     context_parts = []
     chunk_token_limit = MAX_PROMPT_TOKENS - RESERVED_HISTORY_TOKENS
 
     for index, chunk in enumerate(chunks, start=1):
-        # Khai thác metadata 'section'. Dùng .get(..., 'Unknown') nhằm tương thích ngược với các chunk cũ
         section = chunk.get("section", "Unknown")
         chunk_text = f"[{index}] [Trang {chunk['page_number']} - Phần {section}] {chunk['content']}"
         chunk_tokens = _count_tokens(chunk_text)
@@ -101,15 +85,12 @@ def _build_messages(
         context_parts.append(chunk_text)
         current_tokens += chunk_tokens
 
-    # Ghép chunks vào system prompt
+    # Ghép chunks vào system prompt (ĐÃ XÓA KHỐI IF ALLOW_GENERAL_ANSWER CŨ Ở ĐÂY VÌ ĐÃ GỘP LÊN TRÊN)
     context_str = "\n\n".join(context_parts)
-    if allow_general_answer:
-        base_system_prompt += (
-            "\nLưu ý: retrieval đánh dấu câu hỏi có thể ngoài phạm vi tài liệu. "
-            "Vẫn trả lời hữu ích bằng kiến thức chung khi cần, nhưng phân biệt rõ phần dựa trên tài liệu và phần suy luận chung.\n"
-        )
+    
     if not context_str:
-        context_str = "Không có đoạn trích đủ liên quan từ tài liệu đã chọn."
+        context_str = "Không có đoạn trích nào từ tài liệu."
+        
     full_system_prompt = base_system_prompt + context_str
     messages = [{"role": "system", "content": full_system_prompt}]
 
@@ -159,6 +140,7 @@ async def generate_answer(
         response = await client.chat.completions.create(
             model=GROQ_MODEL,
             messages=messages,
+            temperature=0.0,
         )
         return {
             "text": response.choices[0].message.content,
@@ -195,6 +177,7 @@ async def generate_answer_stream(
             model=GROQ_MODEL,
             messages=messages,
             stream=True,
+            temperature=0.0,
         )
         async for chunk in stream:
             token = chunk.choices[0].delta.content

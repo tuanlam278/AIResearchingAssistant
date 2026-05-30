@@ -1,26 +1,32 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck, GitCompare } from 'lucide-react';
+import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck, GitCompare, SearchCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../services/api';
 
 const NAV_ITEMS = [
   {
-    to: '/',
+    to: '/notebook',
     icon: BookOpen,
     label: 'Không gian Nghiên cứu',
     description: 'Tải tài liệu của bạn lên và hỏi AI dựa trên tài liệu riêng.',
+  },
+  {
+    to: '/academic-lens',
+    icon: SearchCheck,
+    label: 'Kính lúp Học thuật',
+    description: 'Đọc, đánh dấu, chụp vùng nội dung và hỏi AI trực tiếp trên tài liệu.',
+  },
+  {
+    to: '/cross-analysis',
+    icon: GitCompare,
+    label: 'So sánh Tương quan',
+    description: 'So sánh sâu hai tài liệu, phát hiện mâu thuẫn và xuất bảng đối chiếu.',
   },
   {
     to: '/system-library',
     icon: Library,
     label: 'Thư viện Hệ thống',
     description: 'Kho tài liệu được chuẩn hóa, tìm kiếm ngữ nghĩa và sẵn sàng cho RAG.',
-  },
-  {
-    to: '/cross-analysis',
-    icon: GitCompare,
-    label: 'Phân tích Tương quan',
-    description: 'So sánh sâu hai tài liệu, phát hiện mâu thuẫn và xuất bảng đối chiếu.',
   },
 ];
 
@@ -44,6 +50,9 @@ const STYLES = `
   }
   .left-sidebar.is-collapsed { width: 92px; }
   .left-sidebar__brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 12px; min-height: 54px; }
+  .left-sidebar__brand-home { display:flex; align-items:center; gap:12px; min-width:0; border:0; background:transparent; color:inherit; padding:0; cursor:pointer; text-align:left; }
+  .left-sidebar__brand-home:hover .left-sidebar__mark { box-shadow:0 12px 34px rgba(196,164,100,.38); }
+  .left-sidebar__brand-home:focus-visible { outline:2px solid rgba(242,212,139,.65); outline-offset:4px; border-radius:16px; }
   .left-sidebar__mark {
     width: 42px; height: 42px; border-radius: 14px;
     display: grid; place-items: center;
@@ -146,11 +155,13 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
     <aside className={`left-sidebar ${collapsed ? 'is-collapsed' : ''} ${mobileOpen ? 'is-mobile-open' : ''}`}>
       <style>{STYLES}</style>
       <div className="left-sidebar__brand">
-        <div className="left-sidebar__mark"><Sparkles size={20} /></div>
-        <div className="left-sidebar__title">
-          <strong>AI Research</strong>
-          <span>Assistant workspace</span>
-        </div>
+        <button type="button" className="left-sidebar__brand-home" onClick={() => { navigate('/home'); onCloseMobile?.(); }} aria-label="Về trang chủ">
+          <div className="left-sidebar__mark"><Sparkles size={20} /></div>
+          <div className="left-sidebar__title">
+            <strong>AI Research</strong>
+            <span>Assistant workspace</span>
+          </div>
+        </button>
         <button type="button" className="left-sidebar__collapse" onClick={onToggleCollapsed} aria-label="Thu gọn sidebar">
           <ChevronLeft size={16} />
         </button>
@@ -162,7 +173,7 @@ export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, 
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end={to === '/notebook'}
             className={({ isActive }) => `left-sidebar__nav-link ${isActive ? 'is-active' : ''}`}
             title={collapsed ? `${label} — ${description}` : undefined}
             onClick={onCloseMobile}

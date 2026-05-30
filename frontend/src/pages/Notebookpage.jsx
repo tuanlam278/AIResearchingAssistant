@@ -288,8 +288,14 @@ const STYLES = `
   .nbp-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 320px); gap: 20px; align-items: start; min-width: 0; }
   .nbp-history-panel { position: sticky; top: 82px; max-width: 100%; min-width: 0; overflow-x: hidden; }
   .nbp-history-list { display: grid; gap: 10px; max-width: 100%; min-width: 0; overflow-x: hidden; }
-  .nbp-history-item { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #d4cfc8; border-radius: 12px; padding: 12px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+  .nbp-history-item { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); color: #d4cfc8; border-radius: 12px; padding: 12px; cursor: pointer; transition: border-color 0.2s, background 0.2s, opacity 0.2s; }
   .nbp-history-item:hover { border-color: rgba(196,164,100,0.35); background: rgba(196,164,100,0.07); }
+  .nbp-history-item.is-loading { border-color: rgba(196,164,100,0.38); background: rgba(196,164,100,0.09); cursor: wait; }
+  .nbp-history-item:disabled { opacity: 0.72; }
+  .nbp-history-loading { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; color: #c4a464; font-size: 11px; }
+  .nbp-skeleton-list { display: grid; gap: 10px; }
+  .nbp-skeleton-card { height: 62px; border-radius: 12px; background: linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.08), rgba(255,255,255,0.03)); background-size: 220% 100%; animation: shimmer 1.3s ease-in-out infinite; }
+  @keyframes shimmer { 0% { background-position: 120% 0; } 100% { background-position: -120% 0; } }
   .nbp-history-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; max-width: 100%; min-width: 0; }
   .nbp-history-title { display: -webkit-box; flex: 1; min-width: 0; font-size: 13px; line-height: 1.45; color: #e8e0d0; overflow: hidden; overflow-wrap: anywhere; word-break: break-word; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .nbp-history-time { display: block; margin-top: 6px; color: #6a6050; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -437,6 +443,7 @@ export default function NotebookPage() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState(null);
   const [sessionTitleDraft, setSessionTitleDraft] = useState('');
+  const [openingSessionId, setOpeningSessionId] = useState(null);
 
   const fetchDocuments = async () => {
     if (!token) return;
@@ -536,6 +543,8 @@ export default function NotebookPage() {
   };
 
   const openResearchSession = (session) => {
+    if (openingSessionId || editingSessionId) return;
+    setOpeningSessionId(session.id);
     navigate(`/research/${notebookId}`, {
       state: {
         researchSessionId: session.id,
@@ -943,7 +952,11 @@ export default function NotebookPage() {
             <aside className="nbp-section nbp-history-panel">
               <h2 className="nbp-section-title">Lịch sử nghiên cứu</h2>
               {sessionsLoading ? (
-                <div className="nbp-loading"><div className="nbp-spinner" /> Đang tải...</div>
+                <div className="nbp-skeleton-list" aria-label="Đang tải lịch sử nghiên cứu">
+                  <div className="nbp-skeleton-card" />
+                  <div className="nbp-skeleton-card" />
+                  <div className="nbp-skeleton-card" />
+                </div>
               ) : researchSessions.length === 0 ? (
                 <div className="nbp-empty" style={{ padding: 20 }}>
                   <p className="nbp-empty-text">Chưa có cuộc nghiên cứu nào.</p>
@@ -951,8 +964,10 @@ export default function NotebookPage() {
                 </div>
               ) : (
                 <div className="nbp-history-list">
-                  {sortedResearchSessions.map((session) => (
-                    <button key={session.id} className="nbp-history-item" onClick={() => openResearchSession(session)}>
+                  {sortedResearchSessions.map((session) => {
+                    const isOpening = openingSessionId === session.id;
+                    return (
+                    <button key={session.id} className={`nbp-history-item ${isOpening ? 'is-loading' : ''}`} onClick={() => openResearchSession(session)} disabled={Boolean(openingSessionId) && !isOpening}>
                       {editingSessionId === session.id ? (
                         <span className="nbp-history-edit" onClick={(e) => e.stopPropagation()}>
                           <input
@@ -989,10 +1004,11 @@ export default function NotebookPage() {
                             </span>
                           </span>
                           <span className="nbp-history-time">{new Date(session.updated_at || session.created_at).toLocaleString('vi-VN')}</span>
+                          {isOpening && <span className="nbp-history-loading"><span className="nbp-spinner" /> Đang tải lịch sử nghiên cứu...</span>}
                         </>
                       )}
                     </button>
-                  ))}
+                  );})}
                 </div>
               )}
             </aside>

@@ -108,6 +108,8 @@ export default function RegisterPage() {
           box-shadow: 0 0 0 3px rgba(196,164,100,0.07);
         }
         .auth-input-pass { padding-right: 42px; }
+        .auth-input-pass::-ms-reveal, .auth-input-pass::-ms-clear { display: none; }
+        .auth-input-pass::-webkit-credentials-auto-fill-button { visibility: hidden; display: none !important; pointer-events: none; }
         .auth-toggle-pass {
           position: absolute; right: 12px; top: 50%;
           transform: translateY(-50%);

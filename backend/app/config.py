@@ -3,7 +3,8 @@ from typing import List
 
 
 class Settings(BaseSettings):
-    GOOGLE_API_KEY: str
+    GOOGLE_API_KEY: str = ""
+    VISION_MODEL: str = "gemini-1.5-flash"
     GROQ_API_KEY: str = ""
     GROQ_FLASHCARD_MODEL: str = "llama-3.1-8b-instant"
     SUPABASE_URL: str

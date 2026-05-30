@@ -273,6 +273,20 @@ def _public_document(document: dict[str, Any]) -> dict[str, Any]:
     return {key: document.get(key) for key in ["id", "source_type", "title", "filename", "file_type", "summary", "snippets", "status", "created_at"]}
 
 
+
+
+def get_document_preview(document_id: str) -> dict[str, Any]:
+    document_id = str(document_id or "")
+    document = TEMP_DOCUMENTS.get(document_id) if document_id.startswith("temp_") else _load_system_document(document_id)
+    chunks = document.get("chunks") or []
+    extracted_text = "\n\n".join(str(chunk.get("content") or "").strip() for chunk in chunks if chunk.get("content"))
+    return {
+        **_public_document(document),
+        "preview_text": extracted_text[:MAX_CONTEXT_CHARS_PER_DOC],
+        "extracted_text": extracted_text[:MAX_CONTEXT_CHARS_PER_DOC],
+    }
+
+
 async def detect_conflicts(document_a_ref: dict[str, Any], document_b_ref: dict[str, Any]) -> dict[str, Any]:
     doc_a = resolve_document(document_a_ref)
     doc_b = resolve_document(document_b_ref)

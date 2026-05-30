@@ -12,7 +12,7 @@ export default function LoginPage() {
 
   const navigate = useNavigate();
   const { token, user, loginContext } = useAuth();
-  if (token) return <Navigate to={user?.role === 'admin' ? '/admin' : '/'} replace />;
+  if (token) return <Navigate to={user?.role === 'admin' ? '/admin' : '/home'} replace />;
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -22,7 +22,7 @@ export default function LoginPage() {
       const response = await api.login(email, password);
       if (response && response.access_token) {
         loginContext(response.access_token, response.user);
-        navigate(response.user?.role === 'admin' ? '/admin' : '/', { replace: true });
+        navigate(response.user?.role === 'admin' ? '/admin' : '/home', { replace: true });
       }
     } catch (err) {
       setError(err.message || 'Sai email hoặc mật khẩu. Vui lòng thử lại!');
@@ -126,6 +126,8 @@ export default function LoginPage() {
           box-shadow: 0 0 0 3px rgba(196,164,100,0.07);
         }
         .auth-input-pass { padding-right: 42px; }
+        .auth-input-pass::-ms-reveal, .auth-input-pass::-ms-clear { display: none; }
+        .auth-input-pass::-webkit-credentials-auto-fill-button { visibility: hidden; display: none !important; pointer-events: none; }
         .auth-toggle-pass {
           position: absolute;
           right: 12px; top: 50%;

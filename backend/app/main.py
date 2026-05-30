@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import documents, chat, auth, notebooks, notes, workspaces, research_sessions, system_library, admin, cross_analysis
+from app.routers import documents, chat, auth, notebooks, notes, workspaces, research_sessions, system_library, admin, cross_analysis, academic_lens
 from app.config import settings
 
 app = FastAPI(
@@ -27,6 +27,7 @@ app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspace
 app.include_router(research_sessions.router, prefix="/api", tags=["research-sessions"])
 app.include_router(system_library.router, prefix="/api/system-library", tags=["system-library"])
 app.include_router(cross_analysis.router, prefix="/api/cross-analysis", tags=["cross-analysis"])
+app.include_router(academic_lens.router, prefix="/api/academic-lens", tags=["academic-lens"])
 app.include_router(admin.router)
 
 

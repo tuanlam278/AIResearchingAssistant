@@ -12,7 +12,7 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KEY.strip() else None
 
 # Đưa vào settings để dễ thay đổi, không hardcode
 EMBEDDING_MODEL = getattr(settings, "EMBEDDING_MODEL", "gemini-embedding-2")
@@ -41,6 +41,9 @@ def _embed_batch_with_retry(
     Raises:
         RuntimeError: Sau khi hết số lần retry.
     """
+    if client is None:
+        raise RuntimeError("EMBEDDING_NOT_CONFIGURED: GOOGLE_API_KEY is required for embeddings")
+
     last_error: Exception = RuntimeError("Unknown embedding error")
 
     for attempt in range(retries):

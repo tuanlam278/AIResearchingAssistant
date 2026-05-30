@@ -12,7 +12,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KEY.strip() else None
 
 # Ngưỡng đánh giá text có đọc được không.
 # Text bình thường: avg word length >= 3.0
@@ -102,6 +102,10 @@ async def _extract_text_from_image(image: Image.Image, page_num: int) -> str:
     4. Không bỏ sót bất kỳ chữ nào, không bịa thêm nội dung.
     5. Chỉ trả về nội dung Markdown, không thêm lời chào hay giải thích gì thêm.
     """
+    if client is None:
+        logger.warning("GOOGLE_API_KEY is not configured; scanned-PDF Vision OCR fallback is unavailable.")
+        return ""
+
     RETRYABLE = ("429", "503", "quota", "rate", "unavailable", "overloaded")
 
     for attempt in range(1, 4):  # tối đa 3 lần

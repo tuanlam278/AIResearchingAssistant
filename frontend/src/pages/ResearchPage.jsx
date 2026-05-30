@@ -133,6 +133,15 @@ function CitationHoverCard({ citation }) {
 }
 
 
+function isSafeExternalHref(href = "") {
+  try {
+    const url = new URL(href);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function MarkdownContent({ content = "", citations = [] }) {
   const citationMap = useMemo(
     () => new Map(citations.map((citation) => [String(citation.citation_index), citation])),
@@ -148,13 +157,19 @@ function MarkdownContent({ content = "", citations = [] }) {
       className="rp-markdown"
       skipHtml
       components={{
-        a: ({ href, children }) => {
-          if (href?.startsWith("citation:")) {
+        a: ({ href = "", children }) => {
+          if (href.startsWith("citation:")) {
             const key = href.replace("citation:", "");
             const citation = citationMap.get(key);
             if (citation) return <CitationHoverCard citation={citation} />;
+            return <span className="rp-safe-link-text">{children}</span>;
           }
-          return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+
+          if (isSafeExternalHref(href)) {
+            return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
+          }
+
+          return <span className="rp-safe-link-text">{children}</span>;
         },
       }}
     >
@@ -813,10 +828,15 @@ export default function ResearchPage() {
   const [generatingQuiz, setGeneratingQuiz] = useState(false);
   const [generatingTest, setGeneratingTest] = useState(false);
   const [savingQuiz, setSavingQuiz] = useState(false);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [loadingSessionId, setLoadingSessionId] = useState(null);
+  const [sessionLoadError, setSessionLoadError] = useState("");
+  const [sessionReloadKey, setSessionReloadKey] = useState(0);
 
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
   const activeRequestRef = useRef(null);
+  const sessionRequestRef = useRef(null);
   const loadingTimerRef = useRef(null);
   const quickActionsRef = useRef(null);
 
@@ -860,8 +880,9 @@ export default function ResearchPage() {
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     setLoadingNotes(true);
-    api.getWorkspaceNotes(notebookId, token, { research_session_id: researchSessionId })
+    api.getWorkspaceNotes(notebookId, token, { research_session_id: researchSessionId }, { signal: controller.signal })
       .then((result) => {
         if (cancelled) return;
         const fetchedNotes = result?.notes ?? [];
@@ -869,36 +890,60 @@ export default function ResearchPage() {
         setSavedMessageIds(new Set(fetchedNotes.map((note) => note.source_message_id).filter(Boolean)));
       })
       .catch((err) => {
-        if (!cancelled) showToast("error", err.message || "Không thể tải ghi chú của phiên nghiên cứu.");
+        if (!cancelled && !isAbortError(err)) showToast("error", err.message || "Không thể tải ghi chú của phiên nghiên cứu.");
       })
       .finally(() => {
         if (!cancelled) setLoadingNotes(false);
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); };
   }, [notebookId, token, researchSessionId]);
 
   useEffect(() => {
-    if (!researchSessionId || !token) return;
-    let cancelled = false;
-    api.getResearchSessionMessages(researchSessionId, token)
+    if (!researchSessionId || !token) return undefined;
+
+    sessionRequestRef.current?.controller?.abort();
+    const controller = new AbortController();
+    const requestId = crypto.randomUUID?.() || `${Date.now()}-${researchSessionId}`;
+    sessionRequestRef.current = { id: requestId, controller, sessionId: researchSessionId };
+
+    setIsLoadingSession(true);
+    setLoadingSessionId(researchSessionId);
+    setSessionLoadError("");
+    setLoadingNotes(true);
+
+    const isActive = () => sessionRequestRef.current?.id === requestId;
+
+    api.getResearchSessionMessages(researchSessionId, token, { signal: controller.signal })
       .then((result) => {
-        if (cancelled) return;
+        if (!isActive()) return;
         const session = result?.session || researchSession;
         const loadedMessages = result?.messages || [];
-        const sessionNotes = result?.notes || null;
+        const sessionNotes = result?.notes || [];
         setResearchSession(session);
         setSelectedDocumentIds(session?.selected_document_ids || selectedDocumentIds);
         setMessages(loadedMessages);
-        if (sessionNotes) {
-          setNotes(sessionNotes);
-          setSavedMessageIds(new Set(sessionNotes.map((note) => note.source_message_id).filter(Boolean)));
-        }
+        setNotes(sessionNotes);
+        setSavedMessageIds(new Set(sessionNotes.map((note) => note.source_message_id).filter(Boolean)));
       })
       .catch((err) => {
-        if (!cancelled) showToast("error", err.message || "Không thể tải lịch sử chat.");
+        if (!isActive() || isAbortError(err)) return;
+        const message = err.message || "Không thể tải lịch sử nghiên cứu. Vui lòng thử lại.";
+        setSessionLoadError(message);
+        showToast("error", message);
+      })
+      .finally(() => {
+        if (!isActive()) return;
+        setIsLoadingSession(false);
+        setLoadingSessionId(null);
+        setLoadingNotes(false);
       });
-    return () => { cancelled = true; };
-  }, [researchSessionId, token]);
+
+    return () => {
+      if (sessionRequestRef.current?.id === requestId) {
+        controller.abort();
+      }
+    };
+  }, [researchSessionId, token, sessionReloadKey]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -923,10 +968,16 @@ export default function ResearchPage() {
 
   useEffect(() => () => {
     activeRequestRef.current?.controller?.abort();
+    sessionRequestRef.current?.controller?.abort();
     if (loadingTimerRef.current) window.clearTimeout(loadingTimerRef.current);
   }, []);
 
   const showToast = (type, message) => setToast({ type, message });
+
+  const retryLoadSession = () => {
+    if (!researchSessionId || isLoadingSession) return;
+    setSessionReloadKey((value) => value + 1);
+  };
 
   const setProgressiveLoading = (initialStage = "reading") => {
     setLoadingStage(initialStage);
@@ -1776,18 +1827,28 @@ export default function ResearchPage() {
         .rp-choice-explanations { display: grid; gap: 4px; margin-top: 10px; }
         .rp-choice-explanations small { color: #7f7668; font-size: 11.5px; line-height: 1.45; }
         .rp-flashcard-footer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+        .rp-safe-link-text { color: #d6c28b; text-decoration: none; }
+        .rp-session-loading, .rp-session-error { margin: 18px; border: 1px solid rgba(196,164,100,0.16); background: rgba(196,164,100,0.055); border-radius: 16px; padding: 16px; color: #b8ad9c; display: grid; gap: 12px; }
+        .rp-session-loading strong, .rp-session-error strong { color: #e8e0d0; }
+        .rp-session-skeleton { display: grid; gap: 10px; }
+        .rp-skeleton-bubble { height: 58px; border-radius: 15px; background: linear-gradient(90deg, rgba(255,255,255,0.035), rgba(255,255,255,0.09), rgba(255,255,255,0.035)); background-size: 220% 100%; animation: shimmer 1.3s ease-in-out infinite; }
+        .rp-skeleton-bubble.short { width: 72%; justify-self: end; }
+        .rp-skeleton-bubble.medium { width: 84%; }
+        .rp-session-retry { width: fit-content; border: 1px solid rgba(196,164,100,0.28); background: rgba(196,164,100,0.1); color: #e6c878; border-radius: 10px; padding: 8px 12px; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+        .rp-session-retry:hover { background: rgba(196,164,100,0.16); }
 
+        @keyframes shimmer { 0% { background-position: 120% 0; } 100% { background-position: -120% 0; } }
         @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
       `}</style>
 
       <div className="research-page">
         <header className="rp-header">
-          <Link to={`/notebooks/${notebookId}`} className="rp-back">← Notebook</Link>
+          <Link to="/notebook" className="rp-back">← Notebook</Link>
           <div className="rp-divider" />
           <h1 className="rp-title">{researchSession?.title || "Nghiên cứu tài liệu"}</h1>
           <button className="rp-share-btn" onClick={handleExportDocx} disabled={!researchSessionId || exportingDocx}>{exportingDocx ? "Đang tạo..." : "Chia sẻ DOCX"}</button>
-          <button className="rp-clear-history" onClick={handleClearHistory} disabled={!researchSessionId || loading}>Xóa lịch sử phiên này</button>
+          <button className="rp-clear-history" onClick={handleClearHistory} disabled={!researchSessionId || loading || isLoadingSession}>Xóa lịch sử phiên này</button>
         </header>
 
         <div className="rp-body">
@@ -1810,11 +1871,36 @@ export default function ResearchPage() {
                   Đây là nghiên cứu từ: {selectedDocuments.length > 0 ? selectedDocuments.map((doc) => doc.filename).join(', ') : `${selectedDocumentIds.length} tài liệu đã chọn`}
                 </div>
               )}
-              {messages.length === 0 && !loading ? (
+              {isLoadingSession ? (
+                <div className="rp-session-loading" role="status" aria-live="polite">
+                  <strong>Đang tải lịch sử nghiên cứu...</strong>
+                  <span>Messages và ghi chú của phiên đang được tải từ máy chủ.</span>
+                  <div className="rp-session-skeleton" aria-hidden="true">
+                    <div className="rp-skeleton-bubble medium" />
+                    <div className="rp-skeleton-bubble short" />
+                    <div className="rp-skeleton-bubble medium" />
+                  </div>
+                </div>
+              ) : sessionLoadError ? (
+                <div className="rp-session-error" role="alert">
+                  <strong>Không thể tải lịch sử nghiên cứu.</strong>
+                  <span>{sessionLoadError}</span>
+                  <button type="button" className="rp-session-retry" onClick={retryLoadSession}>Thử lại</button>
+                </div>
+              ) : messages.length === 0 && !loading ? (
                 <div className="rp-empty-state">
                   <div className="rp-empty-icon">✦</div>
-                  <h3>Bắt đầu nghiên cứu</h3>
-                  <p>Đặt câu hỏi về các tài liệu đã chọn để nhận phân tích từ AI.</p>
+                  {researchSessionId ? (
+                    <>
+                      <h3>Phiên nghiên cứu này chưa có cuộc trò chuyện nào.</h3>
+                      <p>Đặt câu hỏi mới để tiếp tục nghiên cứu với các tài liệu đã chọn.</p>
+                    </>
+                  ) : (
+                    <>
+                      <h3>Bắt đầu nghiên cứu</h3>
+                      <p>Đặt câu hỏi về các tài liệu đã chọn để nhận phân tích từ AI.</p>
+                    </>
+                  )}
                   {suggestedQuestions.length > 0 && (
                     <div className="rp-empty-suggestions">
                       {suggestedQuestions.map((question, index) => (
@@ -1881,7 +1967,7 @@ export default function ResearchPage() {
                     type="button"
                     className="rp-suggested-chip"
                     onClick={() => handleSuggestedQuestion(prompt)}
-                    disabled={loading}
+                    disabled={loading || isLoadingSession}
                     title={prompt}
                   >
                     {prompt}
@@ -1896,7 +1982,7 @@ export default function ResearchPage() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Đặt câu hỏi về tài liệu..."
-                  disabled={loading}
+                  disabled={loading || isLoadingSession}
                   rows={2}
                   maxLength={1000}
                 />
@@ -1905,7 +1991,7 @@ export default function ResearchPage() {
                     ■ Dừng tạo
                   </button>
                 ) : (
-                  <button className="rp-send-btn" onClick={handleSubmit} disabled={!input.trim()} title="Gửi (Enter)">↑</button>
+                  <button className="rp-send-btn" onClick={handleSubmit} disabled={!input.trim() || isLoadingSession} title="Gửi (Enter)">↑</button>
                 )}
               </div>
               <p className="rp-hint">Enter để gửi · Shift+Enter xuống dòng</p>
@@ -1914,7 +2000,7 @@ export default function ResearchPage() {
 
           <NotesPanel
             notes={notes}
-            loadingNotes={loadingNotes}
+            loadingNotes={loadingNotes || isLoadingSession}
             activeCitation={activeCitation}
             editingNoteId={editingNoteId}
             editDraft={editDraft}

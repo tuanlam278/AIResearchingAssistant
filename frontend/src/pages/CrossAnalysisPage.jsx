@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Columns, Download, FileText, GitCompare, Loader2, Merge, MessageSquare, Search, UploadCloud, WandSparkles, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Columns, Download, FileText, GitCompare, Loader2, Merge, MessageSquare, Search, UploadCloud, Trash2, WandSparkles, X } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -20,8 +20,11 @@ const STYLES = `
   .ca-hero p { max-width: 840px; color: #a99e8e; line-height: 1.7; }
   .ca-section { margin-top: 20px; border: 1px solid rgba(255,255,255,.08); border-radius: 24px; background: rgba(255,255,255,.035); box-shadow: 0 20px 70px rgba(0,0,0,.24); padding: 18px; }
   .ca-section-title { display:flex; align-items:center; gap: 10px; margin: 0 0 14px; color:#f2d48b; font-size: 18px; }
-  .ca-picker-grid, .ca-split { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .ca-picker-grid, .ca-split { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: stretch; }
   .ca-slot, .ca-doc-panel { border: 1px solid rgba(255,255,255,.08); border-radius: 20px; background: rgba(0,0,0,.18); padding: 16px; min-height: 190px; }
+  .ca-slot { display:flex; flex-direction:column; height:100%; }
+  .ca-slot-content { flex:1; min-height:0; }
+  .ca-slot-actions { margin-top:auto; padding-top:14px; }
   .ca-slot-head { display:flex; align-items:center; justify-content: space-between; gap:12px; color:#d8caa8; }
   .ca-slot-label { display:flex; align-items:center; gap:8px; font-weight: 800; color:#f3ebdc; }
   .ca-doc-title { margin: 14px 0 8px; font-size: 18px; color:#f3ebdc; }
@@ -48,6 +51,9 @@ const STYLES = `
   .ca-doc-panel__header { padding:16px 16px 0; }
   .ca-doc-panel h3 { margin: 0 0 8px; color:#f3ebdc; }
   .ca-doc-panel__body { flex:1; min-height:0; overflow:auto; padding:0 16px 16px; }
+  .ca-text-preview-label { display:inline-flex; align-items:center; gap:6px; width:max-content; margin:0 0 12px; border:1px solid rgba(196,164,100,.22); background:rgba(196,164,100,.08); color:#f2d48b; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:800; }
+  .ca-text-preview { white-space:pre-wrap; line-height:1.72; color:#ded4c4; }
+  .ca-chat-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
   .ca-pdf-viewer { flex:1; min-height:0; display:flex; flex-direction:column; border-top:1px solid rgba(255,255,255,.07); background:#111; }
   .ca-pdf-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 12px; background:rgba(255,255,255,.045); border-bottom:1px solid rgba(255,255,255,.07); }
   .ca-pdf-frame { flex:1; width:100%; min-height:620px; border:0; background:#1d1d1d; }
@@ -78,6 +84,20 @@ function isPdfDocument(doc) {
   const fileType = String(doc?.file_type || '').toLowerCase();
   const filename = String(doc?.filename || doc?.title || '').toLowerCase();
   return fileType.includes('pdf') || filename.endsWith('.pdf');
+}
+
+function documentExtension(doc) {
+  const fileType = String(doc?.file_type || '').toLowerCase();
+  const filename = String(doc?.filename || doc?.title || '').toLowerCase();
+  if (fileType.includes('docx') || filename.endsWith('.docx')) return 'docx';
+  if (fileType.includes('markdown') || fileType === 'md' || filename.endsWith('.md')) return 'md';
+  if (fileType.includes('text') || fileType === 'txt' || filename.endsWith('.txt')) return 'txt';
+  return fileType || filename.split('.').pop() || 'file';
+}
+
+function previewTextFromDocument(doc) {
+  const snippets = (doc?.snippets || []).map((snippet) => snippet.content).filter(Boolean).join('\n\n');
+  return doc?.extracted_text || doc?.preview_text || snippets || doc?.summary || '';
 }
 
 function revokePreviewUrl(doc) {
@@ -122,16 +142,19 @@ function DocumentSlot({ label, document, onUpload, onOpenLibrary, onClear, uploa
         <span className="ca-slot-label"><FileText size={18} /> {label}</span>
         {document && <button className="ca-btn danger" type="button" onClick={onClear}><X size={15} /> Bỏ chọn</button>}
       </div>
-      {document ? (
-        <>
-          <h3 className="ca-doc-title">{document.title || document.filename}</h3>
-          <p className="ca-muted">{sourceLabel(document)} · {document.file_type || 'FILE'}</p>
-          {document.summary && <p className="ca-muted">{document.summary}</p>}
-        </>
-      ) : (
-        <p className="ca-muted" style={{ marginTop: 16 }}>Upload file từ máy hoặc chọn tài liệu đã chuẩn hóa trong Thư viện Hệ thống.</p>
-      )}
-      <div className="ca-actions">
+      <div className="ca-slot-content">
+        {document ? (
+          <>
+            <h3 className="ca-doc-title">{document.title || document.filename}</h3>
+            <p className="ca-muted">{sourceLabel(document)} · {document.file_type || 'FILE'} · {document.status || (document.is_vector_ready ? 'RAG ready' : 'Đã chọn')}</p>
+            {document.summary && <p className="ca-muted">{document.summary}</p>}
+            {Boolean(document.snippets?.length) && <p className="ca-muted"><b>Preview:</b> {document.snippets[0].content}</p>}
+          </>
+        ) : (
+          <p className="ca-muted" style={{ marginTop: 16 }}>Upload file từ máy hoặc chọn tài liệu đã chuẩn hóa trong Thư viện Hệ thống.</p>
+        )}
+      </div>
+      <div className="ca-actions ca-slot-actions">
         <input ref={inputRef} type="file" hidden accept=".pdf,.docx,.txt,.md" onChange={(event) => event.target.files?.[0] && onUpload(event.target.files[0])} />
         <button className="ca-btn" type="button" disabled={uploading} onClick={() => inputRef.current?.click()}>{uploading ? <Loader2 size={16} /> : <UploadCloud size={16} />} Upload File</button>
         <button className="ca-btn" type="button" onClick={onOpenLibrary}><Search size={16} /> Chọn từ Thư viện Hệ thống</button>
@@ -215,18 +238,20 @@ function QuickResultPanel({ quickResult }) {
   );
 }
 
-function PdfDocumentPanel({ label, document }) {
+function DocumentPreviewPanel({ label, document }) {
   const { token } = useAuth();
   const [viewerUrl, setViewerUrl] = useState(document?.preview_url || '');
   const [viewerFilename, setViewerFilename] = useState(document?.filename || document?.title || 'document.pdf');
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerError, setViewerError] = useState('');
+  const [previewDoc, setPreviewDoc] = useState(document);
 
   useEffect(() => {
     let cancelled = false;
     let createdUrl = '';
 
     setViewerError('');
+    setPreviewDoc(document);
     setViewerFilename(document?.filename || document?.title || 'document.pdf');
 
     if (!document || !isPdfDocument(document)) {
@@ -271,6 +296,15 @@ function PdfDocumentPanel({ label, document }) {
     };
   }, [document, token]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!document || document.source_type !== 'system_library') return () => {};
+    api.getCrossAnalysisDocumentPreview(document.id, token)
+      .then((data) => { if (!cancelled) setPreviewDoc((current) => ({ ...(current || document), ...(data || {}) })); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [document, token]);
+
   const viewerSrc = viewerUrl ? `${viewerUrl}#toolbar=1&navpanes=1&scrollbar=1&view=FitH` : '';
 
   return (
@@ -301,10 +335,17 @@ function PdfDocumentPanel({ label, document }) {
         </div>
       ) : (
         <div className="ca-doc-panel__body">
-          {document?.summary && <div className="ca-snippet"><strong>Tóm tắt:</strong><br />{document.summary}</div>}
-          {(document?.snippets || []).map((snippet, index) => <div className="ca-snippet" key={index}><strong>{snippet.section || 'Trích đoạn'} · Trang {snippet.page_number || '?'}</strong><br />{snippet.content}</div>)}
-          {!document && <p className="ca-muted">Chọn một tài liệu PDF để xem bằng PDF viewer hoặc tài liệu khác để xem snippets.</p>}
-          {document && !isPdfDocument(document) && <p className="ca-muted">Tài liệu này không phải PDF; hệ thống hiển thị snippets đã trích xuất thay cho PDF viewer.</p>}
+          {document && ['docx', 'txt', 'md'].includes(documentExtension(document)) && <span className="ca-text-preview-label"><FileText size={14} /> {documentExtension(document).toUpperCase()} preview từ nội dung đã trích xuất</span>}
+          {previewTextFromDocument(previewDoc) ? (
+            <div className="ca-text-preview">{previewTextFromDocument(previewDoc)}</div>
+          ) : (
+            <>
+              {document?.summary && <div className="ca-snippet"><strong>Tóm tắt:</strong><br />{document.summary}</div>}
+              {(document?.snippets || []).map((snippet, index) => <div className="ca-snippet" key={index}><strong>{snippet.section || 'Trích đoạn'} · Trang {snippet.page_number || '?'}</strong><br />{snippet.content}</div>)}
+              {!document && <p className="ca-muted">Chọn một tài liệu PDF để xem bằng PDF viewer hoặc tài liệu DOCX/TXT/MD để xem text preview.</p>}
+              {document && !isPdfDocument(document) && <p className="ca-muted">Không thể xem trước định dạng này. Bạn vẫn có thể dùng AI để phân tích nội dung đã trích xuất.</p>}
+            </>
+          )}
         </div>
       )}
     </article>
@@ -397,6 +438,13 @@ export default function CrossAnalysisPage() {
     }
   };
 
+  const clearChatHistory = async () => {
+    if (!chatMessages.length) return;
+    if (!window.confirm('Bạn có chắc muốn xoá lịch sử trò chuyện của phiên so sánh này không?')) return;
+    setChatMessages([]);
+    try { await api.clearCrossAnalysisChat({ ...payload }, token); } catch {}
+  };
+
   const sendChat = async (event) => {
     event.preventDefault();
     const message = chatInput.trim();
@@ -466,13 +514,16 @@ export default function CrossAnalysisPage() {
       <section className="ca-section">
         <h2 className="ca-section-title"><Columns size={20} /> 3. Split-screen hai tài liệu</h2>
         <div className="ca-split">
-          <PdfDocumentPanel label="A" document={documentA} />
-          <PdfDocumentPanel label="B" document={documentB} />
+          <DocumentPreviewPanel label="A" document={documentA} />
+          <DocumentPreviewPanel label="B" document={documentB} />
         </div>
       </section>
 
       <section className="ca-section">
-        <h2 className="ca-section-title"><MessageSquare size={20} /> 4. Chat AI theo đúng hai tài liệu</h2>
+        <div className="ca-chat-head">
+          <h2 className="ca-section-title" style={{ marginBottom: 0 }}><MessageSquare size={20} /> 4. Chat AI theo đúng hai tài liệu</h2>
+          <button className="ca-btn danger" type="button" disabled={!chatMessages.length} onClick={clearChatHistory}><Trash2 size={16} /> Xoá lịch sử</button>
+        </div>
         <div className="ca-chat-log">
           {chatMessages.length === 0 ? <p className="ca-muted">Hỏi AI về điểm giống/khác nhau, lý do mâu thuẫn, hoặc cách kết hợp hai tài liệu.</p> : chatMessages.map((msg, index) => <div key={index} className={`ca-message ${msg.role}`}>{msg.content}</div>)}
         </div>
