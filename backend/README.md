@@ -1,194 +1,145 @@
-# Backend — AI Research Assistant (FastAPI)
+# Backend — AI Researching Assistant
 
-Phiên bản: 2.0.0
+Backend là dịch vụ **FastAPI** cung cấp API cho xác thực, quản lý notebook/workspace, upload và index tài liệu RAG, chat, ghi chú, research sessions, thư viện hệ thống, phân tích chéo và Academic Lens.
 
-README này mô tả chi tiết backend của ứng dụng AI Research Assistant — một dịch vụ FastAPI triển khai mô hình RAG (Retrieval-Augmented Generation) kết hợp Supabase cho lưu trữ, xác thực và tìm kiếm vector.
+## Vai trò của backend
 
-**Mục tiêu**: cho phép người dùng upload tài liệu (PDF) vào "notebooks", tách nội dung thành các chunk, nhúng (embed) bằng embedding model, lưu vector vào Supabase, rồi trả lời câu hỏi bằng cách kết hợp truy vấn vector và generation từ LLM.
+- Xác thực email/mật khẩu qua Supabase Auth và Google Identity Services qua backend verification.
+- Quản lý profile, avatar, đổi mật khẩu, email 2FA, preferences và xuất/xóa dữ liệu người dùng.
+- Nhận upload PDF/DOCX/TXT/MD, parse nội dung, chunk, embed và lưu metadata/vector vào Supabase.
+- Cung cấp RAG chat non-streaming và SSE streaming với nguồn trích dẫn.
+- Lưu research sessions, messages, notes; xuất DOCX; tạo flashcards/quiz/test bằng Groq.
+- Quản lý System Library cho user và admin.
+- Cung cấp Cross Analysis và Academic Lens APIs.
 
----
+## Yêu cầu
 
-**Yêu cầu**
-- Python 3.10+ (khuyến nghị)
-- Một môi trường ảo (venv / virtualenv / conda)
-- Supabase project (có pgvector và các bảng cần thiết)
-- API key cho Google / Gemini nếu sử dụng Gemini API
+- Python 3.10+
+- Supabase project đã cấu hình bảng/RPC/storage theo các file SQL trong `../docs/sql`
+- Google API key cho Gemini embedding/LLM/vision
+- Groq API key nếu dùng flashcards/quiz/test
+- SMTP nếu dùng OTP/quên mật khẩu/email 2FA thật
 
-Xem `requirements.txt` để biết các thư viện Python cần thiết.
-
----
-
-## Cài đặt nhanh
+## Cài đặt và chạy local
 
 ```bash
 cd backend
 python -m venv .venv
-# Windows
-.venv\\Scripts\\activate
-# macOS / Linux
-source .venv/bin/activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
-# Sửa file .env với các biến cấu hình cần thiết (xem phía dưới)
+uvicorn app.main:app --reload
 ```
 
----
+- API: `http://localhost:8000`
+- Swagger/OpenAPI: `http://localhost:8000/docs`
+- Health check: `GET /api/health`
 
-## Biến môi trường (bắt buộc / quan trọng)
+## Biến môi trường
 
-- `GOOGLE_API_KEY` — (nếu dùng) API key cho Google/Gemini.
-- `SUPABASE_URL` — URL của project Supabase.
-- `SUPABASE_SERVICE_KEY` — Service Role Key (chỉ dùng server-side).
-- `SUPABASE_ANON_KEY` — Public anon key (dùng cho client-side auth flows nếu cần).
-- `CORS_ORIGINS` — Danh sách origin được phép truy cập API (mặc định: `["http://localhost:5173"]`).
-- Các biến cấu hình khác có thể nằm trong `app/config.py` (ví dụ: chunk size, top_k, v.v.).
+Các biến mẫu nằm trong `.env.example`.
 
-Lưu ý: Không commit `SUPABASE_SERVICE_KEY` hoặc các key nhạy cảm vào git.
+| Biến                                                                                           | Mục đích                                                 |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `GOOGLE_API_KEY`                                                                               | Gemini embedding, RAG generation và vision/OCR fallback  |
+| `VISION_MODEL`                                                                                 | Model vision, mặc định `gemini-1.5-flash`                |
+| `GROQ_API_KEY`                                                                                 | Tạo flashcards, quiz và test                             |
+| `GROQ_FLASHCARD_MODEL`                                                                         | Model Groq cho học liệu, mặc định `llama-3.1-8b-instant` |
+| `SUPABASE_URL`                                                                                 | URL Supabase project                                     |
+| `SUPABASE_SERVICE_KEY`                                                                         | Service role key, chỉ dùng server-side                   |
+| `SUPABASE_ANON_KEY`                                                                            | Anon key cho một số auth flow                            |
+| `CORS_ORIGINS`                                                                                 | Danh sách frontend origin được phép gọi API              |
+| `MAX_UPLOAD_MB`                                                                                | Giới hạn dung lượng upload                               |
+| `RAG_RELEVANCE_THRESHOLD`, `TOP_K_CHUNKS`, `MIN_SIMILARITY`                                    | Cấu hình retrieval/RAG                                   |
+| `GOOGLE_CLIENT_ID`                                                                             | Google OAuth web client ID cho Google login/linking      |
+| `JWT_SECRET_KEY`                                                                               | Secret ký session token nội bộ                           |
+| `APP_ENV`, `ENABLE_DEV_AUTH_BYPASS`                                                            | Điều khiển bypass/dev auth safety                        |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`                            | Gửi email OTP/quên mật khẩu/2FA                          |
+| `AVATAR_STORAGE_BUCKET`                                                                        | Bucket lưu avatar                                        |
+| `SYSTEM_LIBRARY_ADMIN_EMAIL`, `SYSTEM_LIBRARY_ADMIN_PASSWORD`, `SYSTEM_LIBRARY_STORAGE_BUCKET` | Admin và storage cho system library                      |
 
----
+> Không commit key thật. `SUPABASE_SERVICE_KEY`, `JWT_SECRET_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY` và SMTP password phải được cấu hình bằng secret manager ở production.
 
-## Chạy server (phát triển)
+## Cấu trúc chính
+
+```text
+app/
+├── main.py                     # Tạo FastAPI app, CORS, đăng ký routers
+├── config.py                   # Pydantic Settings đọc .env
+├── dependencies.py             # Dependency xác thực user hiện tại
+├── db/
+│   └── supabase_client.py      # Supabase client dùng chung
+├── models/
+│   └── schemas.py              # Pydantic schemas
+├── routers/
+│   ├── auth.py                 # Register/login/me/logout/google/password reset
+│   ├── profile.py              # Profile, avatar, password, 2FA, Google linking
+│   ├── notebooks.py            # CRUD notebook, upload, link system docs
+│   ├── documents.py            # List/delete/summarize documents
+│   ├── chat.py                 # RAG ask + SSE stream
+│   ├── notes.py                # Workspace/session notes
+│   ├── workspaces.py           # Workspace document summary
+│   ├── research_sessions.py    # Sessions, messages, export, study assets
+│   ├── system_library.py       # User-facing system library
+│   ├── admin.py                # Admin system library import/delete
+│   ├── cross_analysis.py       # Compare/conflicts/synthesis/chat
+│   └── academic_lens.py        # Document/web/vision chat + notepad
+└── services/
+    ├── document_parser.py      # Dispatch PDF/DOCX/TXT/MD parser
+    ├── pdf_parser.py           # PDF text extraction + OCR fallback
+    ├── chunker.py              # Chunk tài liệu
+    ├── embedder.py             # Gemini embeddings
+    ├── retriever.py            # Supabase pgvector retrieval
+    ├── llm.py                  # Gemini generation/RAG response
+    ├── groq_service.py         # Flashcards/quiz/test
+    ├── vision_service.py       # Vision tasks cho Academic Lens
+    ├── email_service.py        # SMTP email
+    └── *_service.py            # Business logic cho auth/profile/system library/etc.
+```
+
+## API groups chính
+
+| Nhóm              | Prefix                      | Chức năng                                                                                    |
+| ----------------- | --------------------------- | -------------------------------------------------------------------------------------------- |
+| Auth              | `/api/auth`                 | register, login, me, logout, Google login, password reset OTP                                |
+| Profile           | `/api/profile`              | profile, avatar, đổi mật khẩu, email 2FA, Google linking, preferences, export/delete account |
+| Notebooks         | `/api/notebooks`            | CRUD notebook, upload tài liệu, list documents, link system document                         |
+| Documents         | `/api/documents`            | list, delete, summarize document                                                             |
+| Chat              | `/api/chat`                 | `POST /ask`, `POST /ask/stream`                                                              |
+| Workspaces        | `/api/workspaces`           | document summary, research sessions, notes                                                   |
+| Research Sessions | `/api/research-sessions`    | session metadata, messages, notes, DOCX export, flashcards/quiz/test                         |
+| System Library    | `/api/system-library`       | list/search/download/bookmark tài liệu hệ thống                                              |
+| Admin             | `/api/admin/system-library` | import/list/delete tài liệu hệ thống                                                         |
+| Cross Analysis    | `/api/cross-analysis`       | upload, compare, conflicts, synthesis, chat, preview                                         |
+| Academic Lens     | `/api/academic-lens`        | upload/preview, document chat, web chat, vision chat, web context, notepad                   |
+
+## File upload và RAG
+
+- Endpoint upload notebook: `POST /api/notebooks/{notebook_id}/upload` với multipart field `files`.
+- Định dạng được index: `.pdf`, `.docx`, `.txt`, `.md`.
+- `.doc` và `.rtf` được nhận diện nhưng trả lỗi hướng dẫn chuyển đổi vì chưa hỗ trợ index trực tiếp.
+- Backend kiểm tra dung lượng, trùng tên trong cùng notebook, parse nội dung, chunk, embed và lưu vào Supabase.
+- Query RAG dùng `notebook_id`, `question`, `chat_history`, tùy chọn `selected_document_ids` và `research_session_id`.
+
+## Supabase cần chuẩn bị
+
+- Bật extension `vector`.
+- Tạo các bảng chính: profiles, notebooks, documents, document_chunks, notes, research sessions/messages, system library, password reset OTPs.
+- Tạo RPC match chunks/search tương ứng.
+- Tạo storage buckets cho avatar và system documents nếu dùng các tính năng đó.
+- Tham khảo các script SQL trong `../docs/sql`.
+
+## Kiểm thử
 
 ```bash
-uvicorn app.main:app --reload
-# Sau đó mở: http://localhost:8000/docs
+cd backend
+python -m pytest
 ```
 
----
+Hiện repo có test cho Groq service trong `tests/test_groq_service.py`. Khi thay đổi parser/chunker/retriever/LLM, nên bổ sung test cho luồng RAG tương ứng.
 
-## Kiến trúc thư mục chính
+## Ghi chú phát triển
 
-```
-backend/app/
-├── main.py            # Tạo FastAPI app, CORS, đăng ký router
-├── config.py          # Pydantic Settings + cấu hình chung
-├── dependencies.py    # get_current_user — xác thực JWT từ Supabase
-├── db/
-│   └── supabase_client.py  # Wrapper cho Supabase (client, RPC)
-├── models/
-│   └── schemas.py     # Pydantic schemas (auth, notebook, document, chat)
-├── routers/
-│   ├── auth.py        # Đăng ký / đăng nhập / đăng xuất
-│   ├── notebooks.py   # CRUD notebook, upload file vào notebook
-│   ├── documents.py   # Upload / list / delete tài liệu standalone
-│   └── chat.py        # Endpoint hỏi đáp (non-stream + stream)
-└── services/
-    ├── pdf_parser.py  # Parse PDF → pages (PyMuPDF + tùy biến)
-    ├── chunker.py     # Chia trang thành chunk (size, overlap)
-    ├── embedder.py    # Gọi embedding model (gemini-embedding-001 hoặc tương đương)
-    ├── retriever.py   # Tìm kiếm vector trong Supabase (RPC match_chunks)
-    └── llm.py         # Generation + streaming từ LLM (Gemini/other)
-```
-
----
-
-## API chính (tổng quan)
-
-1) Auth — `/api/auth`
-- `POST /api/auth/register` — đăng ký tài khoản mới.
-- `POST /api/auth/login` — đăng nhập, trả `access_token`.
-- `POST /api/auth/logout` — đăng xuất (yêu cầu Bearer token).
-
-2) Notebooks — `/api/notebooks` (cần auth)
-- `POST /api/notebooks` — tạo notebook mới.
-- `GET /api/notebooks` — lấy danh sách notebooks của user.
-- `DELETE /api/notebooks/{notebook_id}` — xóa notebook (kèm xóa document + chunk liên quan).
-- `POST /api/notebooks/{notebook_id}/upload` — upload nhiều PDF vào một notebook.
-- `GET /api/notebooks/{notebook_id}/documents` — liệt kê documents trong notebook.
-
-3) Documents — `/api/documents` (dạng standalone)
-- `POST /api/documents/upload` — upload một file PDF (không gắn notebook).
-- `GET /api/documents` — lấy danh sách documents của user.
-- `DELETE /api/documents/{doc_id}` — xóa document.
-
-4) Chat — `/api/chat` (RAG)
-- `POST /api/chat/ask` — trả về JSON với câu trả lời (non-streaming).
-- `POST /api/chat/ask/stream` — SSE stream trả token/text từng phần (`text/event-stream`).
-
-Request body mẫu cho `/ask` và `/ask/stream`:
-
-```json
-{
-  "notebook_id": "<uuid-notebook>",
-  "question": "Nội dung câu hỏi",
-  "chat_history": [
-    { "role": "user", "content": "..." },
-    { "role": "assistant", "content": "..." }
-  ]
-}
-```
-
----
-
-## Luồng xử lý RAG (tóm tắt)
-
-1. Người dùng upload file PDF vào một `notebook`.
-2. `pdf_parser` tách PDF thành các trang / khối văn bản thô.
-3. `chunker` chia văn bản thành các chunk (ví dụ size=500, overlap=50).
-4. `embedder` gọi embedding model (ví dụ `gemini-embedding-001`) để tạo vector (dimension 768).
-5. Lưu metadata document và chunk (kèm embedding vector) vào Supabase (`documents`, `document_chunks`).
-6. Khi người dùng gửi câu hỏi: embed query → gọi RPC `match_chunks` trên Supabase để lấy top-k chunks theo cosine similarity → kết hợp chunks và chat_history làm prompt cho LLM → sinh câu trả lời và trả về (JSON hoặc SSE stream).
-
----
-
-## Supabase — bảng và RPC cần thiết
-
-Các bảng/field tối thiểu (ví dụ):
-
-- `notebooks`: `id (uuid)`, `user_id`, `name`, `created_at`.
-- `documents`: `id`, `notebook_id`, `filename`, `page_count`, `chunk_count`, `created_at`.
-- `document_chunks`: `id`, `doc_id`, `notebook_id`, `content`, `page_number`, `chunk_index`, `embedding vector(768)`, `created_at`.
-
-- RPC `match_chunks(query_embedding, target_notebook_id, match_count)` — trả về các chunk đã match sắp xếp theo similarity.
-
-Chi tiết SQL / migration có thể đặt trong `docs/architecture.md` nếu cần.
-
----
-
-## Cách sử dụng auth trong code
-
-Các endpoint cần xác thực đều dùng dependency `get_current_user` từ `app.dependencies`: hàm này xác minh JWT (Supabase) và inject thông tin user vào handler.
-
-Ví dụ:
-
-```python
-from app.dependencies import get_current_user
-
-@router.get("/protected")
-async def protected(user=Depends(get_current_user)):
-    user_id = user["user_id"]
-    return {"user_id": user_id}
-```
-
-Nếu token thiếu hoặc không hợp lệ, endpoint trả `401 Unauthorized` tự động.
-
----
-
-## Ghi chú dành cho developer
-
-- File cấu hình trung tâm: `app/config.py`.
-- Khuyến nghị: dùng batch embedding (nếu nhiều chunk) để tối ưu tốc độ và chi phí.
-- Kiểm thử: chạy unit test cho `chunker` và `retriever` trước khi deploy.
-- Tối ưu: cân nhắc sao lưu vector hoặc dùng Supabase Edge Functions cho một số xử lý nặng.
-
----
-
-## Phân công (hiện tại)
-
-- `routers/auth.py`, `services/pdf_parser.py`, `services/chunker.py`, `routers/documents.py`, `dependencies.py`, `routers/notebooks.py` — Gia Phú
-- `services/embedder.py`, `services/retriever.py`, `services/llm.py`, `routers/chat.py` — Đức Tâm
-
----
-
-## Contributing
-
-- Fork repo, tạo branch feature, gửi PR mô tả rõ thay đổi.
-- Kiểm tra biến môi trường và chạy QA cho pipeline RAG khi thay đổi `embedder`/`retriever`/`llm`.
-
----
-
-## License
-
-Đặt license phù hợp với dự án (nếu cần) — ví dụ MIT / Apache-2.0.
-
----
+- Không bọc import bằng `try/except`; dependency thiếu nên được phát hiện rõ khi chạy môi trường.
+- Giữ response thành công theo format `{ "success": true, "data": ... }` và lỗi theo `detail`/`error` hiện có để frontend normalize được.
+- Khi thêm API mới, cập nhật `../docs/api_contract.md` và `frontend/src/services/api.js` nếu UI cần gọi.

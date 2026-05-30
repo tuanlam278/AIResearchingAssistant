@@ -1,152 +1,140 @@
-# Frontend — AI Research Assistant
+# Frontend — AI Researching Assistant
 
-React + Vite frontend với xác thực người dùng và quản lý notebook.
+Frontend là ứng dụng **React + Vite** cho AI Researching Assistant. UI hiện hỗ trợ xác thực, trang chủ, notebook/workspace, research chat, research sessions, notes, system library, admin import, cross analysis, academic lens và profile.
 
-## Cài đặt
+## Chạy local
 
 ```bash
 cd frontend
 npm install
 cp .env.example .env
-# Sửa VITE_API_URL nếu backend chạy cổng khác
 npm run dev
-# → http://localhost:5173
 ```
+
+- App mặc định: `http://localhost:5173`
+- Backend mặc định: `http://localhost:8000` qua `VITE_API_URL`
+
+## Scripts
+
+| Lệnh              | Mục đích             |
+| ----------------- | -------------------- |
+| `npm run dev`     | Chạy Vite dev server |
+| `npm run build`   | Build production     |
+| `npm run preview` | Preview bản build    |
+
+## Biến môi trường
+
+| Biến                    | Mục đích                                                                 |
+| ----------------------- | ------------------------------------------------------------------------ |
+| `VITE_API_URL`          | Base URL của FastAPI backend                                             |
+| `VITE_MAX_UPLOAD_MB`    | Giới hạn upload hiển thị trên frontend, nên khớp `MAX_UPLOAD_MB` backend |
+| `VITE_GOOGLE_CLIENT_ID` | Google Identity Services OAuth Client ID                                 |
 
 ## Tech stack
 
-| Thư viện | Phiên bản | Dùng để |
-|---|---|---|
-| `react` | ^18.3.1 | UI |
-| `react-router-dom` | ^6.26.1 | Routing |
-| `axios` | ^1.7.7 | HTTP calls |
-| `react-markdown` | ^9.0.1 | Render markdown trong chat |
-| `lucide-react` | ^0.400.0 | Icons |
-| `tailwindcss` | ^3.4.17 | Utility CSS |
-| `vite` | ^5.4.2 | Build tool |
+| Thư viện       | Dùng để                                 |
+| -------------- | --------------------------------------- |
+| React 18       | UI components                           |
+| Vite 5         | Dev server/build tool                   |
+| React Router 6 | Routing và protected routes             |
+| Axios          | HTTP client cho API JSON/multipart/blob |
+| Tailwind CSS   | Styling utility-first                   |
+| react-markdown | Render markdown trong chat/answers      |
+| lucide-react   | Icon set                                |
 
-## Cấu trúc
+## Cấu trúc chính
 
-```
+```text
 src/
-├── App.jsx                        # Routing (public + protected routes)
+├── main.jsx                       # Mount React app
+├── App.jsx                        # Route tree, ProtectedRoute, AdminRoute
+├── index.css                      # Tailwind/global styles
 ├── context/
-│   └── AuthContext.jsx            # Lưu token + user, chia sẻ toàn app
-├── pages/
-│   ├── LoginPage.jsx              # Form đăng nhập
-│   ├── RegisterPage.jsx           # Form đăng ký
-│   ├── Notebookspage.jsx          # Trang chủ: danh sách notebooks của user
-│   ├── Notebookpage.jsx           # Chi tiết notebook: documents + upload
-│   └── ResearchPage.jsx           # Trang hỏi đáp (chat với AI)
+│   └── AuthContext.jsx            # Token/user context, persist localStorage
+├── layouts/
+│   └── AppShell.jsx               # Layout sau đăng nhập
+├── services/
+│   └── api.js                     # Toàn bộ API calls + error/timeout/SSE helpers
 ├── components/
-│   ├── DocumentUploader.jsx       # Upload PDF với progress bar
-│   ├── DocumentList.jsx           # Danh sách tài liệu + xóa
-│   ├── ChatBox.jsx                # Chat UI
-│   └── SourceCard.jsx             # Hiển thị nguồn tham khảo
-└── services/
-    └── api.js                     # Tất cả HTTP calls tới backend
+│   ├── layout/LeftSidebar.jsx
+│   ├── ChatBox.jsx
+│   ├── DocumentUploader.jsx
+│   ├── DocumentList.jsx
+│   ├── SourceCard.jsx
+│   ├── system-library/*
+│   └── academic-lens/*
+└── pages/
+    ├── LoginPage.jsx
+    ├── RegisterPage.jsx
+    ├── ForgotPasswordPage.jsx
+    ├── HomePage.jsx
+    ├── Notebookspage.jsx
+    ├── Notebookpage.jsx
+    ├── ResearchPage.jsx
+    ├── SystemLibraryPage.jsx
+    ├── AdminPage.jsx
+    ├── CrossAnalysisPage.jsx
+    ├── AcademicLensPage.jsx
+    └── ProfilePage.jsx
 ```
 
-## Routing
+## Routing hiện tại
 
-```
-/login                   → LoginPage        (public)
-/register                → RegisterPage     (public)
-/                        → Notebookspage    (cần đăng nhập)
-/notebooks/:notebookId   → Notebookpage     (cần đăng nhập)
-/research/:notebookId    → ResearchPage     (cần đăng nhập)
-```
+| Route                    | Page                 | Ghi chú                                          |
+| ------------------------ | -------------------- | ------------------------------------------------ |
+| `/login`                 | `LoginPage`          | Public                                           |
+| `/register`              | `RegisterPage`       | Public                                           |
+| `/forgot-password`       | `ForgotPasswordPage` | Public                                           |
+| `/`                      | redirect `/home`     | Cần đăng nhập                                    |
+| `/home`                  | `HomePage`           | Dashboard/trang chủ sau đăng nhập                |
+| `/notebook`              | `Notebookspage`      | Danh sách notebook/workspace                     |
+| `/notebooks/:notebookId` | `Notebookpage`       | Chi tiết notebook, upload/list tài liệu          |
+| `/research/:notebookId`  | `ResearchPage`       | RAG chat, sessions, notes, export/tạo học liệu   |
+| `/academic-lens`         | `AcademicLensPage`   | Document/web/vision chat + notepad               |
+| `/cross-analysis`        | `CrossAnalysisPage`  | So sánh, mâu thuẫn, tổng hợp, chat tài liệu      |
+| `/system-library`        | `SystemLibraryPage`  | Thư viện hệ thống, search/bookmark/download/link |
+| `/profile`               | `ProfilePage`        | Hồ sơ, avatar, password, 2FA, Google linking     |
+| `/admin`                 | `AdminPage`          | Chỉ user có `role === 'admin'`                   |
+| `*`                      | redirect `/home`     | Fallback                                         |
 
-Nếu chưa đăng nhập mà truy cập route cần auth → redirect về `/login`.  
-Mọi route không khớp → redirect về `/`.
+## API service
 
-## Phân công
+Tất cả request nên đi qua `src/services/api.js` để dùng chung base URL, auth header, timeout, error normalization, blob download và SSE parsing.
 
-| File | Người | Mô tả |
-|------|-------|-------|
-| `context/AuthContext.jsx` | Minh Tiến | Lưu token + user + isReady, cung cấp cho toàn app |
-| `pages/LoginPage.jsx` | Minh Tiến | Form login, gọi `api.login()`, lưu token vào Context |
-| `pages/RegisterPage.jsx` | Minh Tiến | Form register, redirect sang Login sau khi thành công |
-| `pages/Notebookspage.jsx` | Minh Tiến | Danh sách notebooks, tạo mới, điều hướng vào notebook, nút logout |
-| `pages/Notebookpage.jsx` | Minh Tiến | Chi tiết notebook: upload tài liệu, xem documents, vào ResearchPage |
-| `components/DocumentUploader.jsx` | Minh Tiến | Drag-drop, progress bar |
-| `components/DocumentList.jsx` | Minh Tiến | List + delete |
-| `services/api.js` (auth + notebooks + documents) | Minh Tiến | login, register, logout, getNotebooks, createNotebook, deleteNotebook, getNotebookDocuments, uploadDocuments, deleteDocument |
-| `pages/ResearchPage.jsx` | Thanh Tùng | Trang hỏi đáp với AI |
-| `components/ChatBox.jsx` | Thanh Tùng | Chat UI |
-| `components/SourceCard.jsx` | Thanh Tùng | Hiển thị nguồn tham khảo |
-| `services/api.js` (chat) | Thanh Tùng | sendResearchQuery |
+Các nhóm hàm chính trong `api`:
 
-## Quản lý token
+- Auth: `login`, `register`, `me`, `logout`, `loginWithGoogle`, password reset OTP.
+- Profile: `getProfile`, `updateProfile`, `uploadAvatar`, `changePassword`, email 2FA, Google connect/disconnect, preferences, export/delete account.
+- Notebooks/documents: CRUD notebook, upload tài liệu, list/delete documents, link system document.
+- Notes và research sessions: notes theo workspace/session, tạo/sửa/xóa session, messages, export DOCX, generate flashcards/quiz/test.
+- System library/admin: list/search/bookmark/download/import/delete.
+- Cross analysis: upload, compare, conflicts, synthesis, chat, preview.
+- Academic Lens: upload/preview, document chat, web chat, vision chat, web context, save notepad.
+- Chat: `sendResearchQuery`, `streamResearchQuery`, `sendWorkspaceMessage`.
 
-Token lưu trong **React Context**, không dùng `localStorage`:
+## Auth state
 
-```javascript
-// context/AuthContext.jsx
-const AuthContext = createContext();
+`AuthContext` lưu `token`, `user`, `isReady` và các hàm `loginContext`, `logoutContext`, `updateUserContext`. Token và user được persist trong `localStorage` bằng keys:
 
-export const AuthProvider = ({ children }) => {
-  const [token, setToken] = useState(null);
-  const [user, setUser]   = useState(null);
-  const [isReady, setIsReady] = useState(false);
+- `ai-research-access-token`
+- `ai-research-user`
 
-  const loginContext = (newToken, userData) => {
-    setToken(newToken);
-    setUser(userData);
-    setIsReady(true);
-  };
+Protected routes redirect về `/login` khi chưa có token. Admin route yêu cầu `user.role === 'admin'`.
 
-  const logoutContext = () => {
-    setToken(null);
-    setUser(null);
-  };
+## Luồng người dùng chính
 
-  return (
-    <AuthContext.Provider value={{ token, user, isReady, loginContext, logoutContext }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
+1. Đăng ký/đăng nhập hoặc Google login.
+2. Vào Home hoặc danh sách notebook.
+3. Tạo notebook/workspace và upload PDF/DOCX/TXT/MD.
+4. Backend index tài liệu; frontend có thể tạo document summary.
+5. Vào Research để hỏi đáp RAG, tạo/lưu research sessions, notes, export DOCX hoặc sinh flashcards/quiz/test.
+6. Dùng System Library để tìm tài liệu chung và liên kết vào notebook.
+7. Dùng Cross Analysis khi cần so sánh nhiều tài liệu độc lập.
+8. Dùng Academic Lens để đọc tài liệu, chat theo context web/vision và ghi notepad.
 
-export const useAuth = () => useContext(AuthContext);
-```
+## Quy ước phát triển
 
-Lấy token trong component:
-
-```javascript
-const { token } = useAuth();
-```
-
-## API Service
-
-Tất cả HTTP calls đi qua `services/api.js` (dùng `axios`). Backend mặc định tại `http://localhost:8000` (cấu hình qua `VITE_API_URL`).
-
-```javascript
-import { api } from '../services/api';
-
-// Auth
-api.login(email, password)
-api.register(email, password)
-api.logout(token)
-
-// Notebooks
-api.getNotebooks(token)
-api.createNotebook(name, token)
-api.deleteNotebook(notebookId, token)
-
-// Documents trong notebook
-api.getNotebookDocuments(notebookId, token)
-api.uploadDocuments(notebookId, files, token, onProgress)
-api.deleteDocument(docId, token)
-
-// Chat
-api.sendResearchQuery({ notebookId, question, chatHistory }, token)
-```
-
-Lỗi từ API luôn có format `{ error: { code, message } }` — hiển thị `error.message` cho user.
-
-## Quy tắc
-
-1. Không gọi `fetch`/`axios` trực tiếp trong component — dùng `services/api.js`
-2. Token chỉ sống trong React Context, không ghi vào `localStorage`
-3. Mọi error từ API đều có format `{ error: { code, message } }` — hiển thị `error.message` cho user
+- Không gọi `fetch`/`axios` trực tiếp trong page/component nếu API đó đã hoặc nên được gom vào `services/api.js`.
+- Khi thêm route mới, cập nhật `App.jsx`, sidebar/navigation liên quan và README này nếu là tính năng người dùng.
+- Khi thêm biến môi trường frontend, cập nhật `.env.example` và README này.
+- Giữ error message thân thiện với người dùng; ưu tiên dùng error đã được normalize từ `api.js`.
