@@ -12,10 +12,10 @@ from app.config import settings
 from app.db.supabase_client import supabase
 from app.services.email_service import is_smtp_configured, send_password_reset_otp
 
-OTP_EXPIRES_MINUTES = 10
+OTP_EXPIRES_MINUTES = 5
 MAX_OTP_ATTEMPTS = 5
-GENERIC_RESET_REQUEST_MESSAGE = "Nếu email tồn tại, mã xác thực đã được gửi."
-OTP_SENT_MESSAGE = "Mã xác thực đã được tạo. Vui lòng kiểm tra email."
+GENERIC_RESET_REQUEST_MESSAGE = "Nếu email hợp lệ, mã OTP đã được gửi đến hộp thư của bạn."
+OTP_SENT_MESSAGE = GENERIC_RESET_REQUEST_MESSAGE
 OTP_VALID_MESSAGE = "Mã xác thực hợp lệ."
 PASSWORD_UPDATED_MESSAGE = "Đã cập nhật mật khẩu."
 OTP_INVALID_MESSAGE = "Mã xác thực không đúng hoặc đã hết hạn."
@@ -102,11 +102,11 @@ def _verify_otp_hash(email: str, otp: str, otp_hash: str) -> bool:
 
 
 def generate_otp() -> str:
-    return f"{secrets.randbelow(10000):04d}"
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 
 def create_password_reset_otp(email: str) -> str:
-    """Create and persist a hashed 4-digit OTP for a normalized email."""
+    """Create and persist a hashed 6-digit OTP for a normalized email."""
     normalized_email = _normalize_email(email)
     otp = generate_otp()
     expires_at = _now() + timedelta(minutes=OTP_EXPIRES_MINUTES)

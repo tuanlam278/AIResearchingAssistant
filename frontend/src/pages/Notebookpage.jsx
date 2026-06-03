@@ -7,6 +7,9 @@ const MAX_UPLOAD_MB = Number(import.meta.env.VITE_MAX_UPLOAD_MB || 50);
 const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set(["pdf", "docx", "doc", "txt", "md", "rtf"]);
 const SUPPORTED_UPLOAD_ACCEPT = ".pdf,.docx,.doc,.txt,.md,.rtf";
+const WORKSPACE_LAST_PATH_KEY = 'researchWorkspace:lastPath';
+const WORKSPACE_LAST_SESSION_KEY = 'researchWorkspace:lastSession';
+
 
 const STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&display=swap');
@@ -233,6 +236,21 @@ const STYLES = `
     font-size: 14px; transition: color 0.2s, background 0.2s; flex-shrink: 0;
   }
   .nbp-doc-delete:hover { color: #e07878; background: rgba(200,80,80,0.08); }
+  .nbp-source-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .nbp-secondary-btn { border: 1px solid rgba(196,164,100,0.22); background: rgba(196,164,100,0.07); color: #c4a464; border-radius: 10px; padding: 9px 12px; cursor: pointer; font-size: 12px; font-weight: 700; }
+  .nbp-secondary-btn:hover:not(:disabled) { background: rgba(196,164,100,0.13); border-color: rgba(196,164,100,0.36); }
+  .nbp-secondary-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .nbp-library-overlay { position: fixed; inset: 0; z-index: 110; background: rgba(0,0,0,0.68); display: grid; place-items: center; padding: 20px; }
+  .nbp-library-modal { width: min(820px, 100%); max-height: 84vh; overflow: auto; background: #17130e; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; padding: 18px; box-shadow: 0 28px 80px rgba(0,0,0,0.45); }
+  .nbp-library-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .nbp-library-title { font-family: 'Lora', Georgia, serif; color: #e8e0d0; font-size: 17px; }
+  .nbp-library-search { width: 100%; border: 1px solid rgba(255,255,255,0.09); background: rgba(0,0,0,0.24); color: #d4cfc8; border-radius: 12px; padding: 11px 13px; outline: none; margin-bottom: 12px; }
+  .nbp-library-list { display: grid; gap: 9px; }
+  .nbp-library-doc { text-align: left; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.035); color: #d4cfc8; border-radius: 13px; padding: 12px; cursor: pointer; }
+  .nbp-library-doc:hover:not(:disabled) { border-color: rgba(196,164,100,0.34); background: rgba(196,164,100,0.08); }
+  .nbp-library-doc:disabled { opacity: 0.58; cursor: wait; }
+  .nbp-library-doc strong { display: block; color: #e8e0d0; font-size: 13px; margin-bottom: 5px; }
+  .nbp-library-doc span { color: #6a6050; font-size: 11px; }
 
   /* Empty */
   .nbp-empty {
@@ -444,6 +462,11 @@ export default function NotebookPage() {
   const [editingSessionId, setEditingSessionId] = useState(null);
   const [sessionTitleDraft, setSessionTitleDraft] = useState('');
   const [openingSessionId, setOpeningSessionId] = useState(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [libraryDocuments, setLibraryDocuments] = useState([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [linkingSystemDocumentId, setLinkingSystemDocumentId] = useState(null);
 
   const fetchDocuments = async () => {
     if (!token) return;
@@ -502,6 +525,42 @@ export default function NotebookPage() {
     }
   };
 
+  const fetchLibraryDocuments = async () => {
+    if (!token || !libraryOpen) return;
+    setLibraryLoading(true);
+    setUploadError('');
+    try {
+      const result = await api.listSystemLibraryDocuments({ q: libraryQuery }, token);
+      setLibraryDocuments(result?.documents || result?.items || []);
+    } catch (err) {
+      setUploadError(err.message || 'Không thể tải tài liệu từ Thư viện Cộng đồng.');
+    } finally {
+      setLibraryLoading(false);
+    }
+  };
+
+  const linkSystemDocument = async (systemDocument) => {
+    if (!systemDocument?.id || linkingSystemDocumentId) return;
+    setLinkingSystemDocumentId(systemDocument.id);
+    setUploadError('');
+    try {
+      const result = await api.linkSystemDocumentToNotebook(notebookId, systemDocument.id, token);
+      const linkedDoc = result?.document;
+      const nextDocuments = await fetchDocuments();
+      if (linkedDoc?.doc_id || linkedDoc?.id) {
+        const linkedId = linkedDoc.doc_id || linkedDoc.id;
+        setSelectedDocumentIds((prev) => Array.from(new Set([...prev, linkedId])));
+      }
+      if (nextDocuments?.length) await loadDocumentSummary(nextDocuments.map((doc) => doc.doc_id), { generate: true });
+      await fetchResearchSessions();
+      setLibraryOpen(false);
+    } catch (err) {
+      setUploadError(err.message || 'Không thể thêm tài liệu thư viện vào notebook.');
+    } finally {
+      setLinkingSystemDocumentId(null);
+    }
+  };
+
   const fetchNotebookMeta = async () => {
     if (!token) return;
     try {
@@ -527,6 +586,8 @@ export default function NotebookPage() {
       const result = await api.createResearchSession(notebookId, validSelectedIds, token);
       const session = result.session;
       await fetchResearchSessions();
+      localStorage.setItem(WORKSPACE_LAST_PATH_KEY, `/research/${notebookId}`);
+      localStorage.setItem(WORKSPACE_LAST_SESSION_KEY, JSON.stringify({ notebookId, researchSessionId: session.id, selectedDocumentIds: validSelectedIds }));
       navigate(`/research/${notebookId}`, {
         state: {
           prefillQuestion: question,
@@ -545,6 +606,8 @@ export default function NotebookPage() {
   const openResearchSession = (session) => {
     if (openingSessionId || editingSessionId) return;
     setOpeningSessionId(session.id);
+    localStorage.setItem(WORKSPACE_LAST_PATH_KEY, `/research/${notebookId}`);
+    localStorage.setItem(WORKSPACE_LAST_SESSION_KEY, JSON.stringify({ notebookId, researchSessionId: session.id, selectedDocumentIds: session.selected_document_ids || [] }));
     navigate(`/research/${notebookId}`, {
       state: {
         researchSessionId: session.id,
@@ -560,11 +623,18 @@ export default function NotebookPage() {
     // Lấy tên notebook từ localStorage nếu có (được set ở NotebooksPage khi navigate)
     const saved = sessionStorage.getItem(`nb_name_${notebookId}`);
     if (saved) setNotebookName(saved);
+    localStorage.setItem(WORKSPACE_LAST_PATH_KEY, `/notebooks/${notebookId}`);
     fetchNotebookMeta();
     fetchDocuments();
     loadDocumentSummary(null, { generate: false });
     fetchResearchSessions();
   }, [notebookId, token]);
+
+  useEffect(() => {
+    if (!libraryOpen) return undefined;
+    const timeout = window.setTimeout(() => fetchLibraryDocuments(), 250);
+    return () => window.clearTimeout(timeout);
+  }, [libraryOpen, libraryQuery, token]);
 
   // ── Drag & Drop ──────────────────────────────────────────────────────────
   const handleDragOver = (e) => { e.preventDefault(); setIsDragging(true); };
@@ -763,7 +833,7 @@ export default function NotebookPage() {
       <div className="nbp-page">
         {/* Header */}
         <header className="nbp-header">
-          <Link to="/" className="nbp-back">← Notebooks</Link>
+          <Link to="/notebook" className="nbp-back">← Notebooks</Link>
           <div className="nbp-divider" />
           <h1 className="nbp-title">{notebookName}</h1>
           <button
@@ -818,6 +888,11 @@ export default function NotebookPage() {
                   <p className="nbp-dropzone-hint">Hỗ trợ nhiều file · PDF, DOCX, TXT, MD · Tối đa {MAX_UPLOAD_MB}MB/file</p>
                 </>
               )}
+            </div>
+
+            <div className="nbp-source-actions">
+              <button type="button" className="nbp-secondary-btn" onClick={(event) => { event.stopPropagation(); fileInputRef.current?.click(); }} disabled={uploading}>Tải từ máy</button>
+              <button type="button" className="nbp-secondary-btn" onClick={(event) => { event.stopPropagation(); setLibraryOpen(true); }} disabled={uploading}>Chọn từ thư viện</button>
             </div>
 
             {/* Progress */}
@@ -1016,6 +1091,34 @@ export default function NotebookPage() {
 
         </div>
       </div>
+      {libraryOpen && (
+        <div className="nbp-library-overlay" onClick={() => setLibraryOpen(false)}>
+          <section className="nbp-library-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="nbp-library-head">
+              <h2 className="nbp-library-title">Chọn tài liệu từ Thư viện Cộng đồng</h2>
+              <button type="button" className="nbp-secondary-btn" onClick={() => setLibraryOpen(false)}>Đóng</button>
+            </div>
+            <input className="nbp-library-search" value={libraryQuery} onChange={(event) => setLibraryQuery(event.target.value)} placeholder="Tìm theo tiêu đề, tag, chủ đề..." autoFocus />
+            {libraryLoading ? (
+              <div className="nbp-loading"><span className="nbp-spinner" /> Đang tải thư viện...</div>
+            ) : libraryDocuments.length === 0 ? (
+              <div className="nbp-empty" style={{ padding: 24 }}><p className="nbp-empty-text">Không tìm thấy tài liệu phù hợp.</p></div>
+            ) : (
+              <div className="nbp-library-list">
+                {libraryDocuments.map((doc) => {
+                  const disabled = Boolean(linkingSystemDocumentId);
+                  return (
+                    <button key={doc.id} type="button" className="nbp-library-doc" onClick={() => linkSystemDocument(doc)} disabled={disabled}>
+                      <strong>{doc.title || doc.filename}</strong>
+                      <span>{doc.category || 'Khác'} · {doc.file_type || 'FILE'} · {doc.is_vector_ready ? 'Sẵn sàng RAG' : 'Đang xử lý vector'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
     </>
   );
 }

@@ -7,6 +7,17 @@ import DocumentToolbar from '../components/academic-lens/DocumentToolbar';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 
+const ACADEMIC_LENS_SESSION_KEY = 'academicLens:session';
+const ACADEMIC_LENS_LAST_PATH_KEY = 'academicLens:lastPath';
+
+const loadAcademicLensSession = () => {
+  try {
+    return JSON.parse(localStorage.getItem(ACADEMIC_LENS_SESSION_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+};
+
 const STYLES = `
   .al-page { min-height:100vh; padding:24px clamp(14px,2.4vw,34px); background:radial-gradient(ellipse at 35% 0%, rgba(196,164,100,.13), transparent 42%), #0f0d0a; color:#e8dfd0; font-family:'Lora', Georgia, serif; }
   .al-page button, .al-page textarea, .al-page input { font-family:inherit; }
@@ -113,20 +124,37 @@ function LibraryModal({ open, onClose, onSelect }) {
 
 export default function AcademicLensPage() {
   const { token } = useAuth();
+  const savedSession = useMemo(loadAcademicLensSession, []);
   const fileInputRef = useRef(null);
-  const [document, setDocument] = useState(null);
+  const [document, setDocument] = useState(savedSession.document || null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const notepadRef = useRef(null);
   const [notepad, setNotepad] = useState('');
-  const [activeTab, setActiveTab] = useState('document');
-  const [messages, setMessages] = useState([]);
+  const [activeTab, setActiveTab] = useState(savedSession.activeTab || 'document');
+  const [messages, setMessages] = useState(Array.isArray(savedSession.messages) ? savedSession.messages : []);
   const [snipping, setSnipping] = useState(false);
   const [pendingImage, setPendingImage] = useState(null);
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
-  const [webContexts, setWebContexts] = useState([]);
+  const [webContexts, setWebContexts] = useState(Array.isArray(savedSession.webContexts) ? savedSession.webContexts : []);
 
   const docKey = useMemo(() => document?.id ? `academic-lens-note:${document.source_type}:${document.id}` : 'academic-lens-note:draft', [document]);
+
+  useEffect(() => {
+    localStorage.setItem(ACADEMIC_LENS_LAST_PATH_KEY, '/academic-lens');
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(ACADEMIC_LENS_SESSION_KEY, JSON.stringify({ document, activeTab, messages, webContexts }));
+  }, [document, activeTab, messages, webContexts]);
+
+  const selectDocument = (nextDocument) => {
+    setDocument(nextDocument);
+    setMessages([]);
+    setWebContexts([]);
+    setPendingImage(null);
+    setActiveTab('document');
+  };
 
   useEffect(() => {
     setNotepad(localStorage.getItem(docKey) || '');
@@ -142,7 +170,7 @@ export default function AcademicLensPage() {
     try {
       previewUrl = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') ? URL.createObjectURL(file) : '';
       const data = await api.uploadAcademicLensDocument(file, token);
-      setDocument({ ...data, preview_url: previewUrl });
+      selectDocument({ ...data, preview_url: previewUrl });
     } catch (err) {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setError(err.message || 'Không thể upload tài liệu.');
@@ -227,7 +255,7 @@ export default function AcademicLensPage() {
         <AcademicChatPanel activeTab={activeTab} onTabChange={setActiveTab} messages={messages} onSend={sendChat} onReset={resetChatHistory} pendingImage={pendingImage} onClearImage={() => setPendingImage(null)} onAddToNotepad={appendToNotepad} onAddToContext={addToContext} sending={loading === 'chat'} />
         <AcademicNotepad ref={notepadRef} value={notepad} onChange={setNotepad} onSave={saveNotepad} />
       </div>
-      <LibraryModal open={libraryOpen} onClose={() => setLibraryOpen(false)} onSelect={setDocument} />
+      <LibraryModal open={libraryOpen} onClose={() => setLibraryOpen(false)} onSelect={selectDocument} />
     </div>
   );
 }

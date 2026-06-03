@@ -5,10 +5,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
+from app.services.web_search_service import search_web, is_web_search_configured
 from app.dependencies import get_current_user
 from app.services.cross_analysis_service import get_document_preview, resolve_document, upload_temp_document
 from app.services.llm import GROQ_MODEL, client
 from app.services.vision_service import analyze_academic_image, is_vision_configured
+from app.services.activity_log_service import log_user_activity
 
 router = APIRouter(tags=["academic-lens"])
 
@@ -69,9 +71,23 @@ def _context_from_document(document: dict[str, Any]) -> str:
 
 @router.post("/documents/upload", response_model=dict)
 async def upload_academic_lens_document(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    _ = user
     contents = await file.read()
-    document = await upload_temp_document(contents, file.filename or "academic-document")
+    filename = file.filename or "academic-document"
+    document = await upload_temp_document(contents, filename)
+    log_user_activity(
+        user_id=_user_id(user),
+        feature_name="academic_lens",
+        action_type="document_upload",
+        document_id=document.get("id"),
+        document_name=document.get("filename") or filename,
+        metadata={
+            "file_type": document.get("file_type"),
+            "size": len(contents),
+            "source": "academic_lens_upload",
+            "upload_status": "ready",
+            "temp_document_id": document.get("id"),
+        },
+    )
     preview = get_document_preview(document["id"])
     return {"success": True, "data": {**document, **preview}}
 
@@ -106,8 +122,44 @@ async def document_chat(body: DocumentChatRequest, user: dict = Depends(get_curr
 
 @router.post("/web-chat", response_model=dict)
 async def web_chat(body: WebChatRequest, user: dict = Depends(get_current_user)):
-    _ = (body, user)
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail={"code": "WEB_SEARCH_NOT_CONFIGURED", "message": "Global Web Chat cần cấu hình Web Search API."})
+    _ = user
+    if not is_web_search_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "WEB_SEARCH_NOT_CONFIGURED", "message": "Global Web Chat cần cấu hình Web Search API."},
+        )
+
+    # 1. Lấy kết quả web
+    results = await search_web(body.message)
+    
+    # 2. Tạo context từ kết quả
+    context = "\n\n".join(
+        f"[{idx}] {item.title}\nURL: {item.url}\nSnippet: {item.snippet}\nContent: {item.content}"
+        for idx, item in enumerate(results, start=1)
+    )
+
+    # 3. Gọi Groq LLM để sinh câu trả lời
+    response = await client.chat.completions.create(
+        model=GROQ_MODEL, # Thay bằng model Groq bạn đang dùng
+        messages=[
+            {
+                "role": "system",
+                "content": "Bạn là Global Web Chat. Trả lời dựa trên kết quả web đã cung cấp và trích dẫn nguồn bằng [1], [2].",
+            },
+            {"role": "user", "content": f"Kết quả web:\n{context}\n\nCâu hỏi: {body.message}"},
+        ],
+        temperature=0.2,
+    )
+
+    # 4. Trả kết quả về frontend
+    return {
+        "success": True,
+        "data": {
+            "answer": response.choices[0].message.content or "",
+            "citations": [{"title": r.title, "url": r.url} for r in results],
+        },
+    }
+   
 
 
 @router.post("/vision-chat", response_model=dict)

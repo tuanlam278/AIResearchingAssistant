@@ -30,27 +30,6 @@ function useGoogleCredential(callback) {
   return { buttonRef, configured: Boolean(clientId) };
 }
 
-function downloadJsonFile(data, filename) {
-  const payload = data?.blob ?? data;
-  if (payload == null) throw new Error('Không thể tải dữ liệu cá nhân. Vui lòng thử lại.');
-
-  const blob = payload instanceof Blob
-    ? payload
-    : new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-
-  const url = URL.createObjectURL(blob);
-  try {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = data?.filename || filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 function ProfileNotice({ notice, onClose }) {
   if (!notice?.message) return null;
   const icon = notice.type === 'success' ? '✓' : notice.type === 'error' ? '⚠' : notice.type === 'warning' ? '!' : 'i';
@@ -103,7 +82,7 @@ export default function ProfilePage() {
 
   const tabs = [
     ['basic', 'Thông tin cá nhân'], ['security', 'Bảo mật'], ['social', 'Liên kết tài khoản'],
-    ['activity', 'Hoạt động'], ['data', 'Dữ liệu & tài khoản'],
+    ['activity', 'Hoạt động'], ['data', 'Tài khoản'],
   ];
 
   return (
@@ -273,13 +252,12 @@ function Activity({ activity }) {
   return <section className="card"><h2>Lịch sử hoạt động</h2><div className="stats"><div><strong>{fmtDate(activity?.account_created_at)}</strong><span>Ngày tạo tài khoản</span></div><div><strong>{stats.notebooks ?? 0}</strong><span>Notebook</span></div><div><strong>{stats.documents ?? 0}</strong><span>Tài liệu</span></div><div><strong>{stats.research_sessions ?? 0}</strong><span>Phiên nghiên cứu</span></div><div><strong>{stats.notes ?? 0}</strong><span>Note</span></div></div><ul className="timeline">{(activity?.recent_activity || []).map((item, idx)=><li key={`${item.type}-${idx}`}><span>{item.label}</span><time>{fmtDate(item.created_at)}</time></li>)}{!activity?.recent_activity?.length && <li>Chưa có hoạt động gần đây.</li>}</ul></section>;
 }
 
-function DataAccount({ token, onSuccess, onError, logoutContext }) {
+function DataAccount({ token, onError, logoutContext }) {
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deleteText, setDeleteText] = useState('');
-  const exportData = async () => { try { const data = await api.exportProfileData(token); downloadJsonFile(data, `user-data-${new Date().toISOString().slice(0, 10)}.json`); onSuccess('Đã tải file dữ liệu cá nhân.'); } catch { onError(new Error('Không thể tải dữ liệu cá nhân. Vui lòng thử lại.')); } };
   const deactivate = async () => { try { await api.deactivateAccount(token); logoutContext(); window.location.href = '/login'; } catch (err) { onError(err); } };
   const remove = async () => { try { await api.deleteAccount(token); logoutContext(); window.location.href = '/login'; } catch (err) { onError(err); } };
-  return <section className="grid two"><div className="card"><h2>Tải dữ liệu cá nhân</h2><p>Xuất JSON gồm hồ sơ, notebooks, tài liệu, phiên nghiên cứu và notes thuộc tài khoản hiện tại.</p><button className="secondary" onClick={exportData}>Tải xuống dữ liệu cá nhân</button></div><div className="card danger-zone"><h2>Danger zone</h2><button className="danger-soft" onClick={()=>setDeactivateOpen(true)}>Vô hiệu hóa tài khoản</button>{deactivateOpen && <div className="confirm"><p>Bạn có chắc muốn vô hiệu hóa tài khoản? Dữ liệu không bị xóa và bạn sẽ được đăng xuất.</p><button className="danger" onClick={deactivate}>Xác nhận vô hiệu hóa</button><button className="secondary" onClick={()=>setDeactivateOpen(false)}>Hủy</button></div>}<div className="divider" /><label>Nhập <strong>XOA TAI KHOAN</strong> để xóa/ẩn danh hồ sơ<input value={deleteText} onChange={e=>setDeleteText(e.target.value)} /></label><button className="danger" disabled={deleteText !== 'XOA TAI KHOAN'} onClick={remove}>Xóa tài khoản vĩnh viễn</button></div></section>;
+  return <section className="grid two"><div className="card danger-zone"><h2>Danger zone</h2><button className="danger-soft" onClick={()=>setDeactivateOpen(true)}>Vô hiệu hóa tài khoản</button>{deactivateOpen && <div className="confirm"><p>Bạn có chắc muốn vô hiệu hóa tài khoản? Dữ liệu không bị xóa và bạn sẽ được đăng xuất.</p><button className="danger" onClick={deactivate}>Xác nhận vô hiệu hóa</button><button className="secondary" onClick={()=>setDeactivateOpen(false)}>Hủy</button></div>}<div className="divider" /><label>Nhập <strong>XOA TAI KHOAN</strong> để xóa/ẩn danh hồ sơ<input value={deleteText} onChange={e=>setDeleteText(e.target.value)} /></label><button className="danger" disabled={deleteText !== 'XOA TAI KHOAN'} onClick={remove}>Xóa tài khoản vĩnh viễn</button></div></section>;
 }
 
 const styles = `

@@ -25,6 +25,47 @@ def _metadata(user_obj: Any, field: str) -> dict:
     return getattr(user_obj, field, None) or {}
 
 
+ACCOUNT_DISABLED_DETAIL = {
+    "code": "ACCOUNT_DISABLED",
+    "message": "Tài khoản của bạn đã bị vô hiệu hóa hoặc không tồn tại.",
+}
+
+
+def _profile_status_for_user(user_id: str) -> dict | None:
+    for table in ("profiles", "users"):
+        try:
+            resp = (
+                supabase.table(table)
+                .select("*")
+                .eq("id", user_id)
+                .limit(1)
+                .execute()
+            )
+            rows, error = _supabase_response_data(resp)
+            if not error and rows:
+                return rows[0]
+        except Exception:
+            continue
+    return None
+
+
+def _ensure_user_account_active(user_id: str) -> dict | None:
+    profile = _profile_status_for_user(user_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=ACCOUNT_DISABLED_DETAIL)
+
+    status_value = str(profile.get("status") or "active").lower()
+    if (
+        profile.get("is_active") is False
+        or bool(profile.get("deleted_at"))
+        or bool(profile.get("disabled_at"))
+        or status_value not in {"active", ""}
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ACCOUNT_DISABLED_DETAIL)
+
+    return profile
+
+
 def _role_from_auth_user(user_obj: Any) -> str | None:
     for field in ("app_metadata", "user_metadata"):
         role = _metadata(user_obj, field).get("role")
@@ -63,11 +104,12 @@ async def get_current_user(
 
     app_claims = verify_app_access_token(token)
     if app_claims:
+        profile = _ensure_user_account_active(str(app_claims["sub"]))
         return {
             "user_id": str(app_claims["sub"]),
             "id": str(app_claims["sub"]),
             "email": str(app_claims["email"]),
-            "role": str(app_claims.get("role") or "user"),
+            "role": str((profile or {}).get("role") or app_claims.get("role") or "user"),
         }
 
     try:
@@ -107,7 +149,8 @@ async def get_current_user(
             detail={"code": "UNAUTHORIZED", "message": "Token không hợp lệ hoặc đã hết hạn"},
         )
 
-    role = _role_from_auth_user(user_obj) or _role_from_profile(str(user_id)) or "user"
+    profile = _ensure_user_account_active(str(user_id))
+    role = _role_from_auth_user(user_obj) or (profile or {}).get("role") or _role_from_profile(str(user_id)) or "user"
     return {"user_id": str(user_id), "id": str(user_id), "email": email, "role": role}
 
 

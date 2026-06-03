@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   BookOpen,
   Library,
@@ -30,9 +30,9 @@ const NAV_ITEMS = [
   {
     to: "/cross-analysis",
     icon: GitCompare,
-    label: "So sánh Tương quan",
+    label: "Đối chiếu Tài liệu",
     description:
-      "So sánh sâu hai tài liệu, phát hiện mâu thuẫn và xuất bảng đối chiếu.",
+      "Đối chiếu nội dung hai tài liệu với bằng chứng theo từng tiêu chí.",
   },
   {
     to: "/system-library",
@@ -198,8 +198,11 @@ export default function LeftSidebar({
 }) {
   const { token, user, logoutContext } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const email = user?.email || "researcher@local";
   const initial = (user?.name || email).trim().charAt(0).toUpperCase();
+  const rememberedWorkspacePath = localStorage.getItem("researchWorkspace:lastPath") || "/notebook";
+  const rememberedAcademicLensPath = localStorage.getItem("academicLens:lastPath") || "/academic-lens";
   const navItems =
     user?.role === "admin"
       ? [
@@ -212,6 +215,14 @@ export default function LeftSidebar({
           },
         ]
       : NAV_ITEMS;
+  const resolvedNavItems = navItems.map((item) => {
+    if (item.to === "/notebook") return { ...item, to: rememberedWorkspacePath };
+    if (item.to === "/academic-lens") return { ...item, to: rememberedAcademicLensPath };
+    return item;
+  });
+
+  const isWorkspaceActive = location.pathname === "/notebook" || location.pathname.startsWith("/notebooks/") || location.pathname.startsWith("/research/");
+  const isAcademicLensActive = location.pathname.startsWith("/academic-lens");
 
   const handleLogout = async () => {
     try {
@@ -264,14 +275,15 @@ export default function LeftSidebar({
           className="left-sidebar__nav"
           aria-label="Điều hướng chế độ nghiên cứu"
         >
-          {navItems.map(({ to, icon: Icon, label, description }) => (
+          {resolvedNavItems.map(({ to, icon: Icon, label, description }) => (
             <NavLink
               key={to}
               to={to}
               end={to === "/notebook"}
-              className={({ isActive }) =>
-                `left-sidebar__nav-link ${isActive ? "is-active" : ""}`
-              }
+              className={({ isActive }) => {
+                const active = isActive || (label === "Không gian Nghiên cứu" && isWorkspaceActive) || (label === "Kính lúp Học thuật" && isAcademicLensActive);
+                return `left-sidebar__nav-link ${active ? "is-active" : ""}`;
+              }}
               title={collapsed ? `${label} — ${description}` : undefined}
               onClick={onCloseMobile}
             >

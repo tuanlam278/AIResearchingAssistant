@@ -1,13 +1,11 @@
 """Current-user profile, security, social-link and data-management routes."""
 from __future__ import annotations
 
-import json
 from datetime import date, datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import settings
@@ -67,6 +65,33 @@ def _safe_profile(row: dict | None, user: dict) -> dict:
     }
 
 
+
+def _normalize_display_name(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _display_name_exists(display_name: str, exclude_user_id: str | None = None) -> bool:
+    try:
+        q = supabase.table("profiles").select("id").ilike("display_name", display_name).limit(1)
+        if exclude_user_id:
+            q = q.neq("id", exclude_user_id)
+        rows, error = _supabase_response_data(q.execute())
+        return bool(not error and rows)
+    except Exception as exc:
+        print(f"DISPLAY NAME UNIQUE CHECK FAILED: {exc}")
+        return False
+
+
+def _raise_display_name_taken() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "code": "USERNAME_TAKEN",
+            "message": "Tên đăng nhập đã tồn tại, vui lòng chọn một tên khác.",
+        },
+    )
+
 def _get_profile(user: dict) -> dict:
     user_id = _user_id(user)
     try:
@@ -101,11 +126,15 @@ def _update_profile(user: dict, updates: dict) -> dict:
             raise RuntimeError(error)
         return rows[0] if rows else _get_profile(user)
     except Exception as exc:
-        if "google_email" in updates or "google_avatar_url" in updates or "default_password_must_change" in updates:
+        if "display_name" in updates and any(term in str(exc).lower() for term in ("duplicate", "unique", "idx_profiles_display_name_unique")):
+            _raise_display_name_taken()
+        if any(key in updates for key in ("google_email", "google_avatar_url", "default_password_must_change", "disabled_at", "deleted_at")):
             fallback_updates = dict(updates)
             fallback_updates.pop("google_email", None)
             fallback_updates.pop("google_avatar_url", None)
             fallback_updates.pop("default_password_must_change", None)
+            fallback_updates.pop("disabled_at", None)
+            fallback_updates.pop("deleted_at", None)
             try:
                 resp = supabase.table("profiles").update(fallback_updates).eq("id", _user_id(user)).execute()
                 rows, error = _supabase_response_data(resp)
@@ -150,6 +179,10 @@ async def get_me(user: dict = Depends(get_current_user)) -> dict:
 @router.patch("/me")
 async def update_me(payload: ProfileUpdateRequest, user: dict = Depends(get_current_user)) -> dict:
     updates = payload.model_dump(exclude_unset=True)
+    if "display_name" in updates:
+        updates["display_name"] = _normalize_display_name(updates.get("display_name"))
+        if updates["display_name"] and _display_name_exists(updates["display_name"], _user_id(user)):
+            _raise_display_name_taken()
     if "date_of_birth" in updates and updates["date_of_birth"] is not None:
         updates["date_of_birth"] = updates["date_of_birth"].isoformat()
     profile = _update_profile(user, updates)
@@ -287,10 +320,40 @@ async def activity(user: dict = Depends(get_current_user)) -> dict:
     except Exception:
         docs, sessions, notes = [], [], []
     recent = []
+    feature_labels = {
+        "notebook": "Không gian nghiên cứu",
+        "academic_lens": "Kính lúp học thuật",
+        "cross_analysis": "So sánh tương quan",
+        "system_library": "Thư viện hệ thống",
+    }
+    try:
+        rows, error = _supabase_response_data(
+            supabase.table("user_activity_logs")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        if not error:
+            for item in rows or []:
+                module = feature_labels.get(item.get("feature_name"), item.get("feature_name") or "Hệ thống")
+                document_name = item.get("document_name") or "tài liệu"
+                recent.append({
+                    "type": item.get("action_type") or "activity",
+                    "feature_name": item.get("feature_name"),
+                    "module": module,
+                    "document_name": item.get("document_name"),
+                    "metadata": item.get("metadata") or {},
+                    "label": f"{module}: đã tải lên {document_name}",
+                    "created_at": item.get("created_at"),
+                })
+    except Exception:
+        pass
     for n in notebooks:
         recent.append({"type": "notebook_created", "label": f"Đã tạo notebook {n.get('name') or ''}".strip(), "created_at": n.get("created_at")})
     for d in docs or []:
-        recent.append({"type": "document_uploaded", "label": f"Đã tải tài liệu {d.get('filename') or ''}".strip(), "created_at": d.get("created_at")})
+        recent.append({"type": "document_uploaded", "module": "Không gian nghiên cứu", "document_name": d.get("filename"), "label": f"Không gian nghiên cứu: đã tải lên {d.get('filename') or ''}".strip(), "created_at": d.get("created_at")})
     for s in sessions or []:
         recent.append({"type": "research_session_created", "label": f"Đã tạo phiên nghiên cứu {s.get('title') or ''}".strip(), "created_at": s.get("created_at")})
     for n in notes or []:
@@ -300,33 +363,27 @@ async def activity(user: dict = Depends(get_current_user)) -> dict:
 
 
 @router.get("/export-data")
-async def export_data(user: dict = Depends(get_current_user)) -> JSONResponse:
-    user_id = _user_id(user)
-    profile = _safe_profile(_get_profile(user), user)
-    notebooks = _select_owned("notebooks", "*", user_id, order=True)
-    notebook_ids = [n["id"] for n in notebooks]
-    payload = {"profile": profile, "notebooks": notebooks, "documents": [], "research_sessions": [], "notes": [], "created_at": datetime.now(timezone.utc).isoformat()}
-    try:
-        if notebook_ids:
-            payload["documents"], _ = _supabase_response_data(supabase.table("documents").select("*").in_("notebook_id", notebook_ids).execute())
-            payload["research_sessions"], _ = _supabase_response_data(supabase.table("research_sessions").select("*").in_("notebook_id", notebook_ids).execute())
-            payload["notes"], _ = _supabase_response_data(supabase.table("notes").select("*").in_("workspace_id", notebook_ids).execute())
-    except Exception:
-        pass
-    filename = f"user-data-{date.today().isoformat()}.json"
-    return JSONResponse(content=json.loads(json.dumps(payload, default=str)), headers={"Content-Disposition": f"attachment; filename={filename}"})
-
+async def export_data(user: dict = Depends(get_current_user)) -> dict:
+    # Deprecated: personal JSON export removed from UI.
+    _ = user
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "PROFILE_EXPORT_REMOVED",
+            "message": "Tính năng tải xuống dữ liệu cá nhân dạng JSON đã được gỡ khỏi hồ sơ.",
+        },
+    )
 
 @router.post("/deactivate")
 async def deactivate(user: dict = Depends(get_current_user)) -> dict:
-    _update_profile(user, {"is_active": False})
+    _update_profile(user, {"is_active": False, "disabled_at": datetime.now(timezone.utc).isoformat()})
     return {"success": True, "data": {"message": "Tài khoản đã được vô hiệu hóa."}}
 
 
 @router.delete("/account")
 async def delete_account(user: dict = Depends(get_current_user)) -> dict:
     anonymized = f"deleted-{_user_id(user)}@deleted.local"
-    _update_profile(user, {"is_active": False, "email": anonymized, "full_name": None, "display_name": "Deleted user", "avatar_url": None, "google_id": None, "google_email": None, "google_avatar_url": None})
+    _update_profile(user, {"is_active": False, "email": anonymized, "full_name": None, "display_name": "Deleted user", "avatar_url": None, "google_id": None, "google_email": None, "google_avatar_url": None, "deleted_at": datetime.now(timezone.utc).isoformat()})
     try:
         supabase.auth.admin.update_user_by_id(_user_id(user), {"user_metadata": {"deleted": True}})
     except Exception:

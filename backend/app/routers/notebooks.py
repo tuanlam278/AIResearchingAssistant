@@ -15,6 +15,7 @@ from app.services.chunker import chunk_text
 from app.services.embedder import embed_chunks
 from app.db.supabase_client import supabase
 from app.config import settings
+from app.services.activity_log_service import log_user_activity
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,21 @@ async def upload_documents(
 
     for file in files:
         result = await _process_single_file(file, notebook_id, max_size_bytes, citation_threshold, tags)
+        if result.get("status") == "ready":
+            log_user_activity(
+                user_id=user_id,
+                feature_name="notebook",
+                action_type="document_upload",
+                document_id=result.get("doc_id") or result.get("id"),
+                document_name=result.get("filename"),
+                metadata={
+                    "file_type": result.get("file_type"),
+                    "size": result.get("size"),
+                    "source": "notebook_upload",
+                    "upload_status": result.get("status"),
+                    "notebook_id": notebook_id,
+                },
+            )
         results.append(result)
 
     return {
@@ -439,6 +455,7 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
         "file_type": file_type,
         "page_count": page_count,
         "chunk_count": chunk_count,
+        "size": len(contents),
         "created_at": created_at,
         "status": "ready",
     }

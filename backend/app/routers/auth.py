@@ -295,6 +295,42 @@ def _ensure_profile(
     return _profile_for_user(user_id)
 
 
+
+def _normalize_display_name(value: str | None) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _display_name_exists(display_name: str, exclude_user_id: str | None = None) -> bool:
+    try:
+        q = supabase.table("profiles").select("id").ilike("display_name", display_name).limit(1)
+        if exclude_user_id:
+            q = q.neq("id", exclude_user_id)
+        rows, error = _supabase_response_data(q.execute())
+        return bool(not error and rows)
+    except Exception as exc:
+        print(f"DISPLAY NAME UNIQUE CHECK FAILED: {exc}")
+        return False
+
+
+def _raise_display_name_taken() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "code": "USERNAME_TAKEN",
+            "message": "Tên đăng nhập đã tồn tại, vui lòng chọn một tên khác.",
+        },
+    )
+
+
+def _is_profile_disabled(profile: Dict[str, Any] | None) -> bool:
+    profile = profile or {}
+    return (
+        profile.get("is_active") is False
+        or bool(profile.get("deleted_at"))
+        or str(profile.get("status") or "active").lower() not in {"active", ""}
+    )
+
 def _is_dev_admin_login(email: str, password: str) -> bool:
     expected_email = settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin"
     expected_password = settings.SYSTEM_LIBRARY_ADMIN_PASSWORD or "admin"
@@ -335,6 +371,10 @@ def _confirm_password_user_email(email: str) -> bool:
 
 @router.post("/register")
 async def register(payload: RegisterRequest) -> Dict[str, Any]:
+    display_name = _normalize_display_name(payload.name)
+    if display_name and _display_name_exists(display_name):
+        _raise_display_name_taken()
+
     if payload.confirm_password is not None and payload.password != payload.confirm_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -352,8 +392,8 @@ async def register(payload: RegisterRequest) -> Dict[str, Any]:
                 "email_confirm": True,
                 "user_metadata": {
                     "auth_provider": "password",
-                    "name": payload.name,
-                    "full_name": payload.name,
+                    "name": display_name,
+                    "full_name": display_name,
                 },
             }
         )
@@ -421,8 +461,8 @@ async def register(payload: RegisterRequest) -> Dict[str, Any]:
         {
             "password_login_enabled": True,
             "auth_provider": "password",
-            "full_name": payload.name,
-            "display_name": payload.name,
+            "full_name": display_name,
+            "display_name": display_name,
         },
     )
 
@@ -572,6 +612,15 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
         },
     )
 
+    if _is_profile_disabled(profile):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ACCOUNT_DISABLED",
+                "message": "Tài khoản của bạn đã bị vô hiệu hóa hoặc không tồn tại.",
+            },
+        )
+
     return {
         "success": True,
         "data": {
@@ -655,7 +704,7 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "code": "ACCOUNT_DISABLED",
-                    "message": "Tài khoản đã bị vô hiệu hóa.",
+                    "message": "Tài khoản của bạn đã bị vô hiệu hóa hoặc không tồn tại.",
                 },
             )
 
@@ -770,7 +819,7 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "code": "ACCOUNT_DISABLED",
-                "message": "Tài khoản đã bị vô hiệu hóa.",
+                "message": "Tài khoản của bạn đã bị vô hiệu hóa hoặc không tồn tại.",
             },
         )
 
@@ -796,7 +845,7 @@ def _get_reset_auth_user(email: str) -> Any | None:
 
 def _require_valid_otp_format(otp: str) -> str:
     value = str(otp or "").strip()
-    if len(value) != 4 or not value.isdigit():
+    if len(value) != 6 or not value.isdigit():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},

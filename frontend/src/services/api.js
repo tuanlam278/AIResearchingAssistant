@@ -78,9 +78,12 @@ function normalizeError(err) {
 
   if (axios.isAxiosError(err)) {
     const apiError = err.response?.data?.error || err.response?.data?.detail;
-    const message = apiError?.message || err.message || "Không thể kết nối server";
+    const message = (typeof apiError === "string" ? apiError : apiError?.message) || err.message || "Không thể kết nối server";
     const error = new Error(message);
-    error.code = apiError?.code || "NETWORK_ERROR";
+    error.code = (typeof apiError === "string" ? undefined : apiError?.code) || "NETWORK_ERROR";
+    if ((err.response?.status === 401 || err.response?.status === 403) && (error.code === "ACCOUNT_DISABLED" || /vô hiệu hóa|không tồn tại/i.test(message))) {
+      window.dispatchEvent(new CustomEvent("auth:force-logout", { detail: { message } }));
+    }
     error.status = err.response?.status;
     error.details = err.response?.data;
     return error;
@@ -182,8 +185,8 @@ export const api = {
   login: (email, password) =>
     unwrapRequest(() => axiosInstance.post("/api/auth/login", { email, password })),
 
-  register: (email, password) =>
-    unwrapRequest(() => axiosInstance.post("/api/auth/register", { email, password })),
+  register: (email, password, name) =>
+    unwrapRequest(() => axiosInstance.post("/api/auth/register", { email, password, confirm_password: password, name })),
 
   me: (token) =>
     unwrapRequest(() => axiosInstance.get("/api/auth/me", { headers: authHeader(token) })),
@@ -243,15 +246,6 @@ export const api = {
   getProfileActivity: (token) =>
     unwrapRequest(() => axiosInstance.get("/api/profile/activity", { headers: authHeader(token) })),
 
-  exportProfileData: async (token) => {
-    try {
-      const response = await axiosInstance.get("/api/profile/export-data", { headers: authHeader(token), responseType: "blob" });
-      return getBlobResponse(response, `user-data-${new Date().toISOString().slice(0, 10)}.json`);
-    } catch (err) {
-      throw normalizeError(err);
-    }
-  },
-
   deactivateAccount: (token) =>
     unwrapRequest(() => axiosInstance.post("/api/profile/deactivate", {}, { headers: authHeader(token) })),
 
@@ -310,6 +304,15 @@ export const api = {
       })
     );
   },
+
+  linkSystemDocumentToNotebook: (notebookId, systemDocumentId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(
+        `/api/notebooks/${notebookId}/system-documents`,
+        { system_document_id: systemDocumentId },
+        { headers: authHeader(token) }
+      )
+    ),
 
   deleteDocument: (docId, token) =>
     unwrapRequest(() =>
@@ -581,6 +584,31 @@ export const api = {
   chatCrossAnalysisDocuments: (payload, token) =>
     unwrapRequest(() =>
       axiosInstance.post("/api/cross-analysis/chat", payload, { headers: authHeader(token) })
+    ),
+
+  createCrossAnalysisSession: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/cross-analysis/sessions", payload, { headers: authHeader(token) })
+    ),
+
+  listCrossAnalysisSessions: (token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/cross-analysis/sessions", { headers: authHeader(token) })
+    ),
+
+  getCrossAnalysisSession: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/cross-analysis/sessions/${sessionId}`, { headers: authHeader(token) })
+    ),
+
+  updateCrossAnalysisSession: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.patch(`/api/cross-analysis/sessions/${sessionId}`, payload, { headers: authHeader(token) })
+    ),
+
+  deleteCrossAnalysisSession: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/cross-analysis/sessions/${sessionId}`, { headers: authHeader(token) })
     ),
 
   // ── ACADEMIC LENS ──────────────────────────────────────────────────────

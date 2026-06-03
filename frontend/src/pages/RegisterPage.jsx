@@ -4,16 +4,19 @@ import { api } from '../services/api';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
-  const [showPass, setShowPass] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const navigate = useNavigate();
 
   const handleRegister = async (e) => {
     e.preventDefault();
+    if (!username.trim()) { setError('Vui lòng nhập tên đăng nhập.'); return; }
     if (!password) { setError('Vui lòng nhập mật khẩu.'); return; }
     if (!confirmPassword) { setError('Vui lòng nhập lại mật khẩu.'); return; }
     if (password.length < 6) { setError('Mật khẩu phải có ít nhất 6 ký tự.'); return; }
@@ -21,12 +24,13 @@ export default function RegisterPage() {
     setError('');
     setLoading(true);
     try {
-      await api.register(email, password);
+      await api.register(email, password, username.trim());
       setDone(true);
       setTimeout(() => navigate('/login'), 2200);
     } catch (err) {
       if (err.code === 'EMAIL_TAKEN' || err.message === 'EMAIL_TAKEN') setError('Email này đã được sử dụng.');
-      else setError('Có lỗi xảy ra khi đăng ký. Vui lòng thử lại.');
+      else if (err.code === 'USERNAME_TAKEN') setError('Tên đăng nhập đã tồn tại, vui lòng chọn một tên khác.');
+      else setError(err.message || 'Có lỗi xảy ra khi đăng ký. Vui lòng thử lại.');
     } finally {
       setLoading(false);
     }
@@ -235,11 +239,23 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="auth-field">
+                  <label className="auth-label">Tên đăng nhập</label>
+                  <input
+                    className="auth-input"
+                    type="text" required
+                    value={username}
+                    onChange={e => setUsername(e.target.value)}
+                    placeholder="Tên hiển thị duy nhất"
+                    autoComplete="username"
+                  />
+                </div>
+
+                <div className="auth-field">
                   <label className="auth-label">Mật khẩu</label>
                   <div className="auth-input-wrap">
                     <input
                       className="auth-input auth-input-pass"
-                      type={showPass ? 'text' : 'password'}
+                      type={showPassword ? 'text' : 'password'}
                       required
                       value={password}
                       onChange={e => setPassword(e.target.value)}
@@ -249,10 +265,10 @@ export default function RegisterPage() {
                     <button
                       type="button"
                       className="auth-toggle-pass"
-                      onClick={() => setShowPass(v => !v)}
+                      onClick={() => setShowPassword(v => !v)}
                       tabIndex={-1}
                     >
-                      {showPass ? '🙈' : '👁'}
+                      {showPassword ? '🙈' : '👁'}
                     </button>
                   </div>
                   <p className="auth-hint">Tối thiểu 6 ký tự</p>
@@ -263,13 +279,21 @@ export default function RegisterPage() {
                   <div className="auth-input-wrap">
                     <input
                       className="auth-input auth-input-pass"
-                      type={showPass ? 'text' : 'password'}
+                      type={showConfirmPassword ? 'text' : 'password'}
                       required
                       value={confirmPassword}
                       onChange={e => setConfirmPassword(e.target.value)}
                       placeholder="Nhập lại mật khẩu"
                       autoComplete="new-password"
                     />
+                    <button
+                      type="button"
+                      className="auth-toggle-pass"
+                      onClick={() => setShowConfirmPassword(v => !v)}
+                      tabIndex={-1}
+                    >
+                      {showConfirmPassword ? '🙈' : '👁'}
+                    </button>
                   </div>
                 </div>
 

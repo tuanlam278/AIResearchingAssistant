@@ -21,6 +21,7 @@ from app.services.system_library_service import (
     vote_document,
 )
 from app.services.paper_providers import get_paper_provider
+from app.services.activity_log_service import log_user_activity
 
 router = APIRouter(tags=["system-library"])
 
@@ -125,9 +126,10 @@ async def upload_document(
     user: dict = Depends(get_current_user),
 ):
     contents = await file.read()
+    filename = file.filename or "library-document"
     document = await import_community_document_from_upload(
         file_contents=contents,
-        filename=file.filename or "library-document",
+        filename=filename,
         user=user,
         title=title,
         description=description,
@@ -135,6 +137,19 @@ async def upload_document(
         tags=tags,
         mime_type=file.content_type,
         citation_threshold=0 if citation_threshold is None else citation_threshold,
+    )
+    log_user_activity(
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+        feature_name="system_library",
+        action_type="community_document_upload",
+        document_id=document.get("id"),
+        document_name=document.get("filename") or document.get("title") or filename,
+        metadata={
+            "file_type": document.get("file_type"),
+            "size": len(contents),
+            "source": "system_library_upload",
+            "upload_status": document.get("status") or "ready",
+        },
     )
     return {"success": True, "data": {"document": document}}
 

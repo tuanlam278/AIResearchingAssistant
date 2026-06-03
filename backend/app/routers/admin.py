@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 from app.dependencies import get_current_user
 from pydantic import BaseModel
 
+from app.services.activity_log_service import log_user_activity
 from app.services.system_library_service import (
     delete_system_document,
     import_system_document_from_upload,
@@ -51,15 +52,29 @@ async def import_system_document(
 ):
     require_admin(user)
     contents = await file.read()
+    filename = file.filename or "system-document"
     document = await import_system_document_from_upload(
         file_contents=contents,
-        filename=file.filename or "system-document",
+        filename=filename,
         created_by=_get_user_id(user),
         title=title,
         category=category,
         tags=tags,
         mime_type=file.content_type,
         citation_threshold=0 if citation_threshold is None else citation_threshold,
+    )
+    log_user_activity(
+        user_id=str(user.get("id") or user.get("user_id") or ""),
+        feature_name="system_library",
+        action_type="system_document_import",
+        document_id=document.get("id"),
+        document_name=document.get("filename") or document.get("title") or filename,
+        metadata={
+            "file_type": document.get("file_type"),
+            "size": len(contents),
+            "source": "admin_system_library_import",
+            "upload_status": document.get("status") or "ready",
+        },
     )
     return {"success": True, "data": {"document": document}}
 

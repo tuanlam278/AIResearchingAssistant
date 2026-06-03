@@ -55,17 +55,17 @@ User hỏi trong notebook/session
 
 ## Công nghệ sử dụng
 
-| Lớp | Công nghệ |
-| --- | --- |
-| Frontend | React 18, Vite 5, React Router, Tailwind CSS, Axios, react-markdown, lucide-react |
-| Backend | FastAPI, Uvicorn, Pydantic Settings, python-multipart |
-| Parse tài liệu | PyMuPDF, python-docx, Gemini Vision fallback cho PDF scan/khó đọc |
-| Chunking | LangChain text splitters, tiktoken |
-| Embedding | Google `gemini-embedding-001` |
-| LLM/RAG | Gemini qua `google-genai` |
-| Flashcards/Quiz/Test | Groq |
-| Database/Auth/Storage | Supabase, pgvector, Storage buckets |
-| Email | SMTP cho OTP/quên mật khẩu/2FA |
+| Lớp                   | Công nghệ                                                                         |
+| --------------------- | --------------------------------------------------------------------------------- |
+| Frontend              | React 18, Vite 5, React Router, Tailwind CSS, Axios, react-markdown, lucide-react |
+| Backend               | FastAPI, Uvicorn, Pydantic Settings, python-multipart                             |
+| Parse tài liệu        | PyMuPDF, python-docx, Gemini Vision fallback cho PDF scan/khó đọc                 |
+| Chunking              | LangChain text splitters, tiktoken                                                |
+| Embedding             | Google `gemini-embedding-001`                                                     |
+| LLM/RAG               | Gemini qua `google-genai`                                                         |
+| Flashcards/Quiz/Test  | Groq                                                                              |
+| Database/Auth/Storage | Supabase, pgvector, Storage buckets                                               |
+| Email                 | SMTP cho OTP/quên mật khẩu/2FA                                                    |
 
 ## Cấu trúc thư mục
 
@@ -142,6 +142,7 @@ Frontend mặc định chạy tại `http://localhost:5173` và gọi backend qu
 - [Backend README](./backend/README.md)
 - [Frontend README](./frontend/README.md)
 - [API Contract](./docs/api_contract.md)
+- [Global Web Chat API Guide](./docs/global_web_chat_api_guide.md)
 - [Architecture](./docs/architecture.md)
 - [System Library Import Guide](./docs/system_library_import_guide.md)
 - SQL trong [`docs/sql`](./docs/sql)

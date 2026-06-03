@@ -11,6 +11,8 @@ const LOADING_LABELS = {
 };
 
 const OUT_OF_SCOPE_WARNING = "Nội dung câu hỏi của bạn đi xa ra khỏi mức của tài liệu, nên nội dung sau có thể đúng hoặc sai.";
+const WORKSPACE_LAST_PATH_KEY = "researchWorkspace:lastPath";
+const WORKSPACE_LAST_SESSION_KEY = "researchWorkspace:lastSession";
 
 const FALLBACK_SUGGESTED_PROMPTS = [
   "Tóm tắt ý chính của tài liệu này",
@@ -834,10 +836,19 @@ export default function ResearchPage() {
   const [noteDetailDraft, setNoteDetailDraft] = useState({ title: "", content: "" });
   const [savingNoteMessageId, setSavingNoteMessageId] = useState(null);
   const [savedMessageIds, setSavedMessageIds] = useState(() => new Set());
+  const savedSession = useMemo(() => {
+    if (location.state?.researchSessionId || location.state?.researchSession?.id) return null;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(WORKSPACE_LAST_SESSION_KEY) || "null");
+      return parsed?.notebookId === notebookId ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [location.state, notebookId]);
   const [suggestedQuestions, setSuggestedQuestions] = useState(() => normalizeSuggestedPrompts(location.state?.suggestedQuestions));
   const [researchSession, setResearchSession] = useState(() => location.state?.researchSession || null);
-  const [researchSessionId, setResearchSessionId] = useState(() => location.state?.researchSessionId || location.state?.researchSession?.id || null);
-  const [selectedDocumentIds, setSelectedDocumentIds] = useState(() => location.state?.selectedDocumentIds || location.state?.researchSession?.selected_document_ids || []);
+  const [researchSessionId, setResearchSessionId] = useState(() => location.state?.researchSessionId || location.state?.researchSession?.id || savedSession?.researchSessionId || null);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState(() => location.state?.selectedDocumentIds || location.state?.researchSession?.selected_document_ids || savedSession?.selectedDocumentIds || []);
   const [selectedDocuments, setSelectedDocuments] = useState(() => location.state?.selectedDocuments || []);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [exportingDocx, setExportingDocx] = useState(false);
@@ -891,6 +902,13 @@ export default function ResearchPage() {
     const timeout = window.setTimeout(() => setToast(null), 2600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    localStorage.setItem(WORKSPACE_LAST_PATH_KEY, `/research/${notebookId}`);
+    if (researchSessionId) {
+      localStorage.setItem(WORKSPACE_LAST_SESSION_KEY, JSON.stringify({ notebookId, researchSessionId, selectedDocumentIds }));
+    }
+  }, [notebookId, researchSessionId, selectedDocumentIds]);
 
   useEffect(() => {
     if (!token || !notebookId) return;

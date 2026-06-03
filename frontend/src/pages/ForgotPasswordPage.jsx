@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 
-const GENERIC_OTP_MESSAGE = 'Mã xác thực đã được tạo. Vui lòng kiểm tra email.';
+const GENERIC_OTP_MESSAGE = 'Nếu email hợp lệ, mã OTP đã được gửi đến hộp thư của bạn.';
+const RESEND_SECONDS = 60;
 
 export default function ForgotPasswordPage() {
   const [step, setStep] = useState(1);
@@ -12,36 +13,25 @@ export default function ForgotPasswordPage() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
 
-  const requestOtp = async (event) => {
-    event.preventDefault();
+  useEffect(() => {
+    if (resendIn <= 0) return undefined;
+    const timer = window.setInterval(() => setResendIn((value) => Math.max(value - 1, 0)), 1000);
+    return () => window.clearInterval(timer);
+  }, [resendIn]);
+
+  const sendOtp = async (event) => {
+    event?.preventDefault?.();
     setError('');
     setLoading(true);
     try {
-      await api.requestPasswordResetOtp(email);
-      setNotice(GENERIC_OTP_MESSAGE);
+      const resp = await api.requestPasswordResetOtp(email);
+      setNotice(resp?.message || GENERIC_OTP_MESSAGE);
       setStep(2);
+      setResendIn(RESEND_SECONDS);
     } catch (err) {
-      setError(err.message || 'Không thể yêu cầu mã xác thực.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const verifyOtp = async (event) => {
-    event.preventDefault();
-    if (!/^\d{4}$/.test(otp)) {
-      setError('Vui lòng nhập OTP gồm 4 số.');
-      return;
-    }
-    setError('');
-    setLoading(true);
-    try {
-      await api.verifyPasswordResetOtp(email, otp);
-      setNotice('Mã xác thực hợp lệ. Vui lòng đặt mật khẩu mới.');
-      setStep(3);
-    } catch (err) {
-      setError(err.message || 'Mã xác thực không đúng hoặc đã hết hạn.');
+      setError(err.message || 'Không thể gửi mã OTP.');
     } finally {
       setLoading(false);
     }
@@ -49,12 +39,16 @@ export default function ForgotPasswordPage() {
 
   const confirmReset = async (event) => {
     event.preventDefault();
-    if (!/^\d{4}$/.test(otp)) {
-      setError('Vui lòng nhập OTP gồm 4 số.');
+    if (!/^\d{6}$/.test(otp)) {
+      setError('Vui lòng nhập OTP gồm 6 số.');
       return;
     }
     if (!passwords.newPassword || !passwords.confirmPassword) {
       setError('Vui lòng nhập đầy đủ mật khẩu mới.');
+      return;
+    }
+    if (passwords.newPassword.length < 6) {
+      setError('Mật khẩu phải có ít nhất 6 ký tự.');
       return;
     }
     if (passwords.newPassword !== passwords.confirmPassword) {
@@ -65,12 +59,13 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     try {
       const resp = await api.confirmPasswordResetWithOtp(email, otp, passwords.newPassword);
-      setNotice(resp.message || 'Đã cập nhật mật khẩu.');
+      setNotice(resp?.message || 'Đã cập nhật mật khẩu. Bạn có thể đăng nhập bằng mật khẩu mới.');
       setPasswords({ newPassword: '', confirmPassword: '' });
-      setStep(1);
       setOtp('');
+      setStep(1);
+      setResendIn(0);
     } catch (err) {
-      setError(err.message || 'Không thể cập nhật mật khẩu.');
+      setError(err.message || 'Mã OTP không đúng hoặc đã hết hạn.');
     } finally {
       setLoading(false);
     }
@@ -82,36 +77,30 @@ export default function ForgotPasswordPage() {
       <section className="reset-card">
         <div className="reset-logo">✦</div>
         <h1>Đặt lại mật khẩu</h1>
-        <p className="muted">Nhận OTP 4 số qua email rồi đặt mật khẩu mới cho tài khoản email hoặc Google.</p>
+        <p className="muted">Nhận OTP 6 số qua email bất kỳ rồi đặt mật khẩu mới. Hệ thống không dùng link reset.</p>
 
         <div className="steps" aria-label="Tiến trình đặt lại mật khẩu">
-          {[1, 2, 3].map((item) => <span key={item} className={step >= item ? 'active' : ''}>{item}</span>)}
+          {[1, 2].map((item) => <span key={item} className={step >= item ? 'active' : ''}>{item}</span>)}
         </div>
 
         {notice ? <div className="notice success">{notice}</div> : null}
         {error ? <div className="notice error">{error}</div> : null}
 
         {step === 1 ? (
-          <form onSubmit={requestOtp}>
+          <form onSubmit={sendOtp}>
             <label>Email<input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="ten@example.com" /></label>
-            <button disabled={loading}>{loading ? 'Đang gửi...' : 'Yêu cầu mã xác thực'}</button>
+            <button disabled={loading}>{loading ? 'Đang gửi...' : 'Gửi mã OTP'}</button>
           </form>
         ) : null}
 
         {step === 2 ? (
-          <form onSubmit={verifyOtp}>
-            <label>OTP 4 số<input inputMode="numeric" pattern="\d{4}" maxLength={4} required value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••" /></label>
-            <button disabled={loading}>{loading ? 'Đang xác thực...' : 'Xác thực OTP'}</button>
-            <button type="button" className="ghost" onClick={() => setStep(1)}>Đổi email</button>
-          </form>
-        ) : null}
-
-        {step === 3 ? (
           <form onSubmit={confirmReset}>
+            <label>OTP 6 số<input inputMode="numeric" pattern="\d{6}" maxLength={6} required value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="••••••" /></label>
             <label>Mật khẩu mới<input type="password" minLength={6} required value={passwords.newPassword} onChange={(e) => setPasswords({ ...passwords, newPassword: e.target.value })} /></label>
             <label>Nhập lại mật khẩu mới<input type="password" minLength={6} required value={passwords.confirmPassword} onChange={(e) => setPasswords({ ...passwords, confirmPassword: e.target.value })} /></label>
             <button disabled={loading}>{loading ? 'Đang cập nhật...' : 'Cập nhật mật khẩu'}</button>
-            <button type="button" className="ghost" onClick={() => setStep(2)}>Nhập lại OTP</button>
+            <button type="button" className="ghost" disabled={loading || resendIn > 0} onClick={sendOtp}>{resendIn > 0 ? `Gửi lại OTP sau ${resendIn}s` : 'Gửi lại OTP'}</button>
+            <button type="button" className="ghost" onClick={() => { setStep(1); setError(''); }}>Đổi email</button>
           </form>
         ) : null}
 

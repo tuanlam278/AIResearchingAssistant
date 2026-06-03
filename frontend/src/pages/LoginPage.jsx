@@ -16,6 +16,14 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { token, user, loginContext } = useAuth();
   useEffect(() => {
+    const forcedMessage = localStorage.getItem('ai-research-force-logout-message');
+    if (forcedMessage) {
+      setError(forcedMessage);
+      localStorage.removeItem('ai-research-force-logout-message');
+    }
+  }, []);
+
+  useEffect(() => {
     if (!googleClientId) return;
     const existingScript = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
     const onLoad = () => setGoogleReady(true);

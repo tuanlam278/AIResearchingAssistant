@@ -15,8 +15,8 @@ const FEATURES = [
     route: '/academic-lens',
   },
   {
-    title: 'So sánh Tương quan',
-    description: 'Đối chiếu hai tài liệu, phát hiện điểm giống/khác và tổng hợp nhận định học thuật.',
+    title: 'Đối chiếu Tài liệu',
+    description: 'Đối chiếu hai tài liệu với evidence A/B, confidence có lý do và chat theo từng dòng.',
     icon: GitCompare,
     route: '/cross-analysis',
   },

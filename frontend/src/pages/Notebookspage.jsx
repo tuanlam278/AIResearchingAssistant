@@ -179,6 +179,7 @@ const STYLES = `
 
 export default function NotebooksPage() {
   const navigate = useNavigate();
+  const rememberWorkspacePath = (path) => localStorage.setItem('researchWorkspace:lastPath', path);
   const { token, logoutContext } = useAuth();
 
   const [notebooks, setNotebooks] = useState([]);
@@ -201,7 +202,10 @@ export default function NotebooksPage() {
     }
   };
 
-  useEffect(() => { fetchNotebooks(); }, [token]);
+  useEffect(() => {
+    rememberWorkspacePath('/notebook');
+    fetchNotebooks();
+  }, [token]);
 
   const handleCreate = async () => {
     const name = newName.trim();
@@ -213,6 +217,7 @@ export default function NotebooksPage() {
       setShowModal(false);
       setNewName('');
       sessionStorage.setItem(`nb_name_${result.notebook_id}`, name); // ← thêm dòng này
+      rememberWorkspacePath(`/notebooks/${result.notebook_id}`);
       navigate(`/notebooks/${result.notebook_id}`);
     } catch {
       setPageError('Tạo notebook thất bại, vui lòng thử lại.');
@@ -292,6 +297,7 @@ export default function NotebooksPage() {
                   className="nb-card"
                   onClick={() => {
                     sessionStorage.setItem(`nb_name_${nb.notebook_id}`, nb.name); // ← thêm dòng này
+                    rememberWorkspacePath(`/notebooks/${nb.notebook_id}`);
                     navigate(`/notebooks/${nb.notebook_id}`);
                   }}
                 >

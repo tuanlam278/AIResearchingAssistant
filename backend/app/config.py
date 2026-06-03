@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     VISION_MODEL: str = "gemini-1.5-flash"
     GROQ_API_KEY: str = ""
     GROQ_FLASHCARD_MODEL: str = "llama-3.1-8b-instant"
+    WEB_SEARCH_PROVIDER: str = "duckduckgo"
+    WEB_SEARCH_API_KEY: str = ""
+    WEB_SEARCH_MAX_RESULTS: int = 5
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
     SUPABASE_ANON_KEY: str
