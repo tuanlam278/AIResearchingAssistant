@@ -461,12 +461,14 @@ async def generate_research_session_quiz(
     return {"success": True, "data": {"quiz": {"id": f"quiz-{session_id}", "title": "Bộ câu hỏi trắc nghiệm", "questions": questions}, "questions": questions, "warning": warning}}
 
 
-@router.post("/research-sessions/{session_id}/tests/generate", response_model=dict)
+@router.post("/research-sessions/{session_id}/tests/generate", response_model=dict, deprecated=True)
 async def generate_research_session_test(
     session_id: str,
     body: GenerateTestRequest,
     user: dict = Depends(get_current_user),
 ):
+    # Deprecated: the /notebook quick action was removed because the heavy mixed-format
+    # test generation flow is less stable than the lightweight quiz/flashcard actions.
     from app.services.groq_service import generate_test_from_context
 
     if body.count != 10:

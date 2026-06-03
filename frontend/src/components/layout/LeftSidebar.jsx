@@ -1,32 +1,45 @@
-import { NavLink, useNavigate } from 'react-router-dom';
-import { BookOpen, Library, ChevronLeft, LogOut, Sparkles, ShieldCheck, GitCompare, SearchCheck, UserCircle } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
-import { api } from '../../services/api';
+import { NavLink, useNavigate } from "react-router-dom";
+import {
+  BookOpen,
+  Library,
+  ChevronLeft,
+  LogOut,
+  Sparkles,
+  ShieldCheck,
+  GitCompare,
+  SearchCheck,
+  UserCircle,
+} from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
+import { api } from "../../services/api";
 
 const NAV_ITEMS = [
   {
-    to: '/notebook',
+    to: "/notebook",
     icon: BookOpen,
-    label: 'Không gian Nghiên cứu',
-    description: 'Tải tài liệu của bạn lên và hỏi AI dựa trên tài liệu riêng.',
+    label: "Không gian Nghiên cứu",
+    description: "Tải tài liệu của bạn lên và hỏi AI dựa trên tài liệu riêng.",
   },
   {
-    to: '/academic-lens',
+    to: "/academic-lens",
     icon: SearchCheck,
-    label: 'Kính lúp Học thuật',
-    description: 'Đọc, đánh dấu, chụp vùng nội dung và hỏi AI trực tiếp trên tài liệu.',
+    label: "Kính lúp Học thuật",
+    description:
+      "Đọc, đánh dấu, chụp vùng nội dung và hỏi AI trực tiếp trên tài liệu.",
   },
   {
-    to: '/cross-analysis',
+    to: "/cross-analysis",
     icon: GitCompare,
-    label: 'So sánh Tương quan',
-    description: 'So sánh sâu hai tài liệu, phát hiện mâu thuẫn và xuất bảng đối chiếu.',
+    label: "So sánh Tương quan",
+    description:
+      "So sánh sâu hai tài liệu, phát hiện mâu thuẫn và xuất bảng đối chiếu.",
   },
   {
-    to: '/system-library',
+    to: "/system-library",
     icon: Library,
-    label: 'Thư viện Hệ thống',
-    description: 'Kho tài liệu được chuẩn hóa, tìm kiếm ngữ nghĩa và sẵn sàng cho RAG.',
+    label: "Thư viện Cộng đồng",
+    description:
+      "Kho tài liệu cộng đồng được chuẩn hóa, tìm kiếm ngữ nghĩa và sẵn sàng cho RAG.",
   },
 ];
 
@@ -36,10 +49,6 @@ const STYLES = `
     inset: 0 auto 0 0;
     z-index: 60;
     width: 280px;
-    padding: 18px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
     background:
       radial-gradient(circle at 30% 0%, rgba(196,164,100,0.14), transparent 28%),
       linear-gradient(180deg, rgba(24,21,16,0.98), rgba(14,12,9,0.98));
@@ -47,9 +56,23 @@ const STYLES = `
     box-shadow: 22px 0 60px rgba(0,0,0,0.35);
     transition: width 0.2s ease, transform 0.22s ease;
     font-family: 'Lora', Georgia, serif;
+    
+    /* QUAN TRỌNG: Gốc rễ để hiển thị tràn viền */
+    overflow: visible !important; 
+  }
+  
+  /* Khối bọc nội dung bên trong để xử lý cuộn độc lập */
+  .left-sidebar__wrapper {
+    width: 100%;
+    height: 100%;
+    padding: 18px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
     overflow-y: auto;
     overflow-x: hidden;
   }
+  
   .left-sidebar.is-collapsed { width: 92px; }
   .left-sidebar__brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 12px; min-height: 54px; }
   .left-sidebar__brand-home { display:flex; align-items:center; gap:12px; min-width:0; border:0; background:transparent; color:inherit; padding:0; cursor:pointer; text-align:left; }
@@ -67,23 +90,44 @@ const STYLES = `
   .left-sidebar__title { min-width: 0; }
   .left-sidebar__title strong { display: block; color: #f2eadb; font-family: 'Lora', Georgia, serif; font-size: 17px; line-height: 1.15; }
   .left-sidebar__title span { display: block; color: #8a8070; font-size: 12px; margin-top: 3px; }
+  
+  /* ĐỊNH VỊ NÚT: Đặt tuyệt đối so với toàn bộ .left-sidebar */
   .left-sidebar__collapse {
-    margin-left: auto; width: 28px; height: 28px; border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 9px; color: #8a8070; background: rgba(255,255,255,0.03); cursor: pointer;
-    display: inline-flex; align-items: center; justify-content: center;
+    position: absolute;
+    right: -12px; /* Đẩy lồi ra ngoài biên phải một nửa nút */
+    top: 32px;    /* Căn vị trí chiều dọc khớp với thanh Brand */
+    width: 24px; 
+    height: 24px; 
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 6px; 
+    color: #8a8070; 
+    background: #1b1711; /* Màu nền tối cố định */
+    cursor: pointer;
+    display: inline-flex; 
+    align-items: center; 
+    justify-content: center;
+    z-index: 999; /* Đảm bảo luôn nằm trên cùng */
+    transition: transform 0.2s ease, right 0.2s ease;
+    box-shadow: 4px 0 10px rgba(0,0,0,0.5);
   }
-  .left-sidebar__collapse:hover { color: #d6c28b; border-color: rgba(196,164,100,0.25); }
+  .left-sidebar__collapse:hover { color: #d6c28b; border-color: rgba(196,164,100,0.35); }
+  
+  /* Xoay mũi tên thành ">" khi đóng */
+  .left-sidebar.is-collapsed .left-sidebar__collapse { 
+    transform: rotate(180deg); 
+  }
+
   .left-sidebar.is-collapsed .left-sidebar__title, .left-sidebar.is-collapsed .left-sidebar__item-text, .left-sidebar.is-collapsed .left-sidebar__user-meta, .left-sidebar.is-collapsed .left-sidebar__logout span, .left-sidebar.is-collapsed .left-sidebar__section-label { display: none; }
   .left-sidebar.is-collapsed .left-sidebar__brand, .left-sidebar.is-collapsed .left-sidebar__brand-home, .left-sidebar.is-collapsed .left-sidebar__nav-link, .left-sidebar.is-collapsed .left-sidebar__user { justify-content: center; }
   .left-sidebar.is-collapsed .left-sidebar__brand { padding-left: 0; padding-right: 0; }
   .left-sidebar.is-collapsed .left-sidebar__nav-link { align-items: center; padding-left: 0; padding-right: 0; }
   .left-sidebar.is-collapsed .left-sidebar__nav-link svg { margin-top: 0; }
-  .left-sidebar.is-collapsed .left-sidebar__collapse { position: absolute; right: -14px; top: 28px; background: #1b1711; transform: rotate(180deg); }
-  .left-sidebar__section-label { color: #5a5040; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 0 10px; }
+  
+  .left-sidebar__section-label { color: #5a5040; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; padding: 0 10px; display: flex; justify-content: center; }
   .left-sidebar__nav { display: flex; flex-direction: column; gap: 8px; }
   .left-sidebar__nav-link {
     position: relative;
-    display: flex; align-items: flex-start; gap: 12px;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
     min-height: 58px;
     padding: 12px;
     text-decoration: none;
@@ -136,6 +180,7 @@ const STYLES = `
     cursor: pointer;
   }
   .left-sidebar__logout:hover { color: #e07878; background: rgba(224,120,120,0.07); border-color: rgba(224,120,120,0.18); }
+  
   @media (max-width: 900px) {
     .left-sidebar, .left-sidebar.is-collapsed { width: min(320px, calc(100vw - 44px)); transform: translateX(-105%); }
     .left-sidebar.is-mobile-open { transform: translateX(0); }
@@ -145,68 +190,135 @@ const STYLES = `
   }
 `;
 
-export default function LeftSidebar({ collapsed, mobileOpen, onToggleCollapsed, onCloseMobile }) {
+export default function LeftSidebar({
+  collapsed,
+  mobileOpen,
+  onToggleCollapsed,
+  onCloseMobile,
+}) {
   const { token, user, logoutContext } = useAuth();
   const navigate = useNavigate();
-  const email = user?.email || 'researcher@local';
+  const email = user?.email || "researcher@local";
   const initial = (user?.name || email).trim().charAt(0).toUpperCase();
-  const navItems = user?.role === 'admin' ? [...NAV_ITEMS, { to: '/admin', icon: ShieldCheck, label: 'Quản trị', description: 'Import và quản lý tài liệu Thư viện Hệ thống.' }] : NAV_ITEMS;
-
+  const navItems =
+    user?.role === "admin"
+      ? [
+          ...NAV_ITEMS,
+          {
+            to: "/admin",
+            icon: ShieldCheck,
+            label: "Quản trị",
+            description: "Import và quản lý tài liệu Thư viện Cộng đồng.",
+          },
+        ]
+      : NAV_ITEMS;
 
   const handleLogout = async () => {
-    try { await api.logout(token); } catch {}
+    try {
+      await api.logout(token);
+    } catch {}
     logoutContext();
-    navigate('/login');
+    navigate("/login");
   };
 
   return (
-    <aside className={`left-sidebar app-scrollbar ${collapsed ? 'is-collapsed' : ''} ${mobileOpen ? 'is-mobile-open' : ''}`}>
+    <aside
+      className={`left-sidebar ${collapsed ? "is-collapsed" : ""} ${mobileOpen ? "is-mobile-open" : ""}`}
+    >
       <style>{STYLES}</style>
-      <div className="left-sidebar__brand">
-        <button type="button" className="left-sidebar__brand-home" onClick={() => { navigate('/home'); onCloseMobile?.(); }} aria-label="Về trang chủ">
-          <div className="left-sidebar__mark"><Sparkles size={20} /></div>
-          <div className="left-sidebar__title">
-            <strong>AI Research</strong>
-            <span>Assistant workspace</span>
+
+      {/* NÚT BẤM ĐƯỢC ĐƯA RA NGOÀI KHỐI CUỘN WRAPPER */}
+      <button
+        type="button"
+        className="left-sidebar__collapse"
+        onClick={onToggleCollapsed}
+        aria-label="Thu gọn sidebar"
+      >
+        <ChevronLeft size={14} />
+      </button>
+
+      {/* KHỐI CON CHỨA TOÀN BỘ NỘI DUNG VÀ XỬ LÝ CUỘN (SCROLL) */}
+      <div className="left-sidebar__wrapper app-scrollbar">
+        <div className="left-sidebar__brand">
+          <button
+            type="button"
+            className="left-sidebar__brand-home"
+            onClick={() => {
+              navigate("/home");
+              onCloseMobile?.();
+            }}
+            aria-label="Về trang chủ"
+          >
+            <div className="left-sidebar__mark">
+              <Sparkles size={20} />
+            </div>
+            <div className="left-sidebar__title">
+              <strong>AI Research</strong>
+              <span>Assistant workspace</span>
+            </div>
+          </button>
+        </div>
+
+        <div className="left-sidebar__section-label">Chế độ làm việc</div>
+        <nav
+          className="left-sidebar__nav"
+          aria-label="Điều hướng chế độ nghiên cứu"
+        >
+          {navItems.map(({ to, icon: Icon, label, description }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === "/notebook"}
+              className={({ isActive }) =>
+                `left-sidebar__nav-link ${isActive ? "is-active" : ""}`
+              }
+              title={collapsed ? `${label} — ${description}` : undefined}
+              onClick={onCloseMobile}
+            >
+              <Icon size={20} />
+              <span className="left-sidebar__item-text">
+                <span className="left-sidebar__label">{label}</span>
+                <span className="left-sidebar__description">{description}</span>
+              </span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="left-sidebar__spacer" />
+
+        <button
+          type="button"
+          className="left-sidebar__user left-sidebar__profile-link"
+          title={collapsed ? email : "Mở hồ sơ cá nhân"}
+          onClick={() => {
+            navigate("/profile");
+            onCloseMobile?.();
+          }}
+        >
+          <div className="left-sidebar__avatar">
+            {user?.avatar_url ? (
+              <img src={user.avatar_url} alt="Avatar" />
+            ) : (
+              initial
+            )}
+          </div>
+          <div className="left-sidebar__user-meta">
+            <strong>{user?.name || email}</strong>
+            <span>
+              <UserCircle size={12} /> Hồ sơ cá nhân ·{" "}
+              {user?.role === "admin" ? "Admin" : "User"}
+            </span>
           </div>
         </button>
-        <button type="button" className="left-sidebar__collapse" onClick={onToggleCollapsed} aria-label="Thu gọn sidebar">
-          <ChevronLeft size={16} />
+
+        <button
+          type="button"
+          className="left-sidebar__logout"
+          onClick={handleLogout}
+        >
+          <LogOut size={16} /> <span>Đăng xuất</span>
         </button>
       </div>
-
-      <div className="left-sidebar__section-label">Chế độ làm việc</div>
-      <nav className="left-sidebar__nav" aria-label="Điều hướng chế độ nghiên cứu">
-        {navItems.map(({ to, icon: Icon, label, description }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === '/notebook'}
-            className={({ isActive }) => `left-sidebar__nav-link ${isActive ? 'is-active' : ''}`}
-            title={collapsed ? `${label} — ${description}` : undefined}
-            onClick={onCloseMobile}
-          >
-            <Icon size={20} />
-            <span className="left-sidebar__item-text">
-              <span className="left-sidebar__label">{label}</span>
-              <span className="left-sidebar__description">{description}</span>
-            </span>
-          </NavLink>
-        ))}
-      </nav>
-
-
-      <div className="left-sidebar__spacer" />
-      <button type="button" className="left-sidebar__user left-sidebar__profile-link" title={collapsed ? email : 'Mở hồ sơ cá nhân'} onClick={() => { navigate('/profile'); onCloseMobile?.(); }}>
-        <div className="left-sidebar__avatar">{user?.avatar_url ? <img src={user.avatar_url} alt="Avatar" /> : initial}</div>
-        <div className="left-sidebar__user-meta">
-          <strong>{user?.name || email}</strong>
-          <span><UserCircle size={12} /> Hồ sơ cá nhân · {user?.role === 'admin' ? 'Admin' : 'User'}</span>
-        </div>
-      </button>
-      <button type="button" className="left-sidebar__logout" onClick={handleLogout}>
-        <LogOut size={16} /> <span>Đăng xuất</span>
-      </button>
     </aside>
   );
 }

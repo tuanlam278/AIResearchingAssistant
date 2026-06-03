@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Columns, Download, FileText, GitCompare, Loader2, Merge, MessageSquare, Search, UploadCloud, Trash2, WandSparkles, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Columns, Download, FileText, GitCompare, Info, Loader2, Merge, MessageSquare, Search, UploadCloud, Trash2, WandSparkles, X } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 const CRITERIA = [
-  { key: 'problem_motivation', label: 'Định vị vấn đề và động lực', hint: 'Mục tiêu, giả định và động lực nghiên cứu.' },
+  { key: 'problem_motivation', label: 'Vấn đề & Động lực nghiên cứu', hint: 'Mục tiêu, giả định và động lực nghiên cứu.' },
   { key: 'methodology', label: 'Phương pháp tiếp cận', hint: 'Thuật toán, kiến trúc, tính mới và chi phí.' },
-  { key: 'datasets_experiments', label: 'Dữ liệu và thiết lập thực nghiệm', hint: 'Datasets, baselines, metrics và fairness.' },
-  { key: 'results_tradeoffs', label: 'Kết quả và đánh đổi', hint: 'Điều kiện thắng, ablation, tốc độ và độ chính xác.' },
-  { key: 'scalability_limitations', label: 'Khả năng mở rộng và hạn chế', hint: 'Ứng dụng thực tiễn, rủi ro production, future work.' },
+  { key: 'datasets_experiments', label: 'Dữ liệu & Thiết lập thực nghiệm', hint: 'Datasets, baselines, metrics và fairness.' },
+  { key: 'results_tradeoffs', label: 'Kết quả & Đánh đổi', hint: 'Điều kiện thắng, ablation, tốc độ và độ chính xác.' },
+  { key: 'scalability_limitations', label: 'Khả năng mở rộng & Hạn chế', hint: 'Ứng dụng thực tiễn, rủi ro production, future work.' },
 ];
 
 const STYLES = `
@@ -47,6 +47,12 @@ const STYLES = `
   .ca-table th, .ca-table td { padding: 13px 14px; border-bottom:1px solid rgba(255,255,255,.07); text-align:left; vertical-align:top; color:#d8cfc0; line-height:1.55; }
   .ca-table th { position:sticky; top:0; background:#1a160f; color:#f2d48b; z-index:1; }
   .ca-confidence { white-space:nowrap; color:#9fd0aa; font-weight:800; }
+  .ca-confidence.unknown { color:#c5b8a6; font-weight:700; white-space:normal; }
+
+  .ca-confidence-head { display:inline-flex; align-items:center; gap:6px; position:relative; }
+  .ca-info { display:inline-flex; align-items:center; color:#d8bd77; cursor:help; }
+  .ca-info-tip { position:absolute; right:0; top:calc(100% + 8px); width:min(340px, 70vw); opacity:0; pointer-events:none; transform:translateY(-4px); transition:opacity .15s ease, transform .15s ease; padding:10px 12px; border:1px solid rgba(196,164,100,.24); border-radius:12px; background:#17130d; color:#d8cfc0; box-shadow:0 14px 36px rgba(0,0,0,.36); font-size:12px; line-height:1.5; z-index:3; white-space:normal; }
+  .ca-confidence-head:hover .ca-info-tip, .ca-confidence-head:focus-within .ca-info-tip { opacity:1; transform:translateY(0); }
   .ca-doc-panel { min-height: 72vh; height: min(82vh, 920px); overflow:hidden; display:flex; flex-direction:column; gap:12px; padding:0; }
   .ca-doc-panel__header { padding:16px 16px 0; }
   .ca-doc-panel h3 { margin: 0 0 8px; color:#f3ebdc; }
@@ -95,6 +101,47 @@ function documentExtension(doc) {
   return fileType || filename.split('.').pop() || 'file';
 }
 
+const CRITERION_LABELS = {
+  problem_motivation: 'Vấn đề & Động lực nghiên cứu',
+  methodology: 'Phương pháp tiếp cận',
+  datasets_experiments: 'Dữ liệu & Thiết lập thực nghiệm',
+  datasets_experimental_setup: 'Dữ liệu & Thiết lập thực nghiệm',
+  results_tradeoffs: 'Kết quả & Đánh đổi',
+  scalability_limitations: 'Khả năng mở rộng & Hạn chế',
+  novelty: 'Tính mới',
+  complexity: 'Chi phí tính toán / Độ phức tạp',
+  baselines_metrics: 'Baseline & Chỉ số đánh giá',
+  practical_application: 'Khả năng ứng dụng thực tế',
+  limitations: 'Hạn chế',
+};
+
+function mapCriterionLabel(criterion = '', explicitLabel = '') {
+  if (explicitLabel) return explicitLabel;
+  const key = String(criterion || '').trim();
+  if (!key) return 'Tiêu chí chưa đặt tên';
+  if (CRITERION_LABELS[key]) return CRITERION_LABELS[key];
+  return key
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatConfidence(confidence) {
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return 'Chưa đủ dữ liệu';
+  const percent = confidence >= 0 && confidence <= 1 ? confidence * 100 : confidence;
+  return `${Math.round(Math.max(0, Math.min(percent, 100)))}%`;
+}
+
+function confidenceTitle(row = {}) {
+  const basis = row.confidence_basis || {};
+  if (typeof row.confidence === 'number' && Number.isFinite(row.confidence)) {
+    const score = typeof basis.average_retrieval_score === 'number' ? ` và điểm truy xuất trung bình ${basis.average_retrieval_score.toFixed(2)}` : '';
+    return `Dựa trên ${basis.citation_count || 0} trích dẫn hợp lệ${score}.`;
+  }
+  return 'Chưa đủ dữ liệu nguồn để ước tính.';
+}
+
 function previewTextFromDocument(doc) {
   const snippets = (doc?.snippets || []).map((snippet) => snippet.content).filter(Boolean).join('\n\n');
   return doc?.extracted_text || doc?.preview_text || snippets || doc?.summary || '';
@@ -122,7 +169,7 @@ function escapeCsv(value) {
 
 function downloadCsv(rows) {
   const headers = ['Tiêu chí', 'Tài liệu A', 'Tài liệu B', 'Nhận xét so sánh', 'Độ tin cậy'];
-  const lines = [headers.map(escapeCsv).join(','), ...rows.map((row) => [row.criterion, row.document_a, row.document_b, row.analysis, row.confidence].map(escapeCsv).join(','))];
+  const lines = [headers.map(escapeCsv).join(','), ...rows.map((row) => [mapCriterionLabel(row.criterion, row.criterion_label), row.document_a, row.document_b, row.analysis, formatConfidence(row.confidence)].map(escapeCsv).join(','))];
   const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -383,7 +430,7 @@ export default function CrossAnalysisPage() {
     previewUrlsRef.current.clear();
   }, []);
 
-  const tableRows = comparisonResult?.comparison_table || [];
+  const tableRows = useMemo(() => (comparisonResult?.comparison_table || []).map((row) => ({ ...row, criterion_display: mapCriterionLabel(row.criterion, row.criterion_label) })), [comparisonResult]);
   const canAnalyze = documentA && documentB && !sameDocument(documentA, documentB);
   const sameWarning = sameDocument(documentA, documentB) ? 'Vui lòng chọn hai tài liệu khác nhau để so sánh.' : '';
   const payload = useMemo(() => ({ document_a: toDocumentRef(documentA), document_b: toDocumentRef(documentB) }), [documentA, documentB]);
@@ -503,8 +550,8 @@ export default function CrossAnalysisPage() {
         {tableRows.length ? (
           <div className="ca-table-wrap">
             <table className="ca-table">
-              <thead><tr><th>Tiêu chí</th><th>Tài liệu A</th><th>Tài liệu B</th><th>Nhận xét so sánh</th><th>Độ tin cậy</th></tr></thead>
-              <tbody>{tableRows.map((row, index) => <tr key={`${row.criterion}-${index}`}><td>{row.criterion}</td><td>{row.document_a}</td><td>{row.document_b}</td><td>{row.analysis}</td><td className="ca-confidence">{typeof row.confidence === 'number' ? `${Math.round(row.confidence * 100)}%` : row.confidence || 'N/A'}</td></tr>)}</tbody>
+              <thead><tr><th>Tiêu chí</th><th>Tài liệu A</th><th>Tài liệu B</th><th>Nhận xét so sánh</th><th><span className="ca-confidence-head">Độ tin cậy <span className="ca-info" tabIndex={0} aria-label="Giải thích độ tin cậy"><Info size={14} /><span className="ca-info-tip" role="tooltip">Độ tin cậy được ước tính dựa trên mức độ liên quan của các đoạn tài liệu được truy xuất bằng vector search, số lượng trích dẫn hỗ trợ và mức độ nhất quán giữa câu trả lời AI với nguồn. Đây không phải là xác suất đúng tuyệt đối.</span></span></span></th></tr></thead>
+              <tbody>{tableRows.map((row, index) => <tr key={`${row.criterion}-${index}`}><td>{row.criterion_display}</td><td>{row.document_a}</td><td>{row.document_b}</td><td>{row.analysis}</td><td className={`ca-confidence ${typeof row.confidence === 'number' ? '' : 'unknown'}`} title={confidenceTitle(row)}>{formatConfidence(row.confidence)}</td></tr>)}</tbody>
             </table>
           </div>
         ) : <p className="ca-muted">Bảng sẽ xuất hiện ngay dưới phần chọn tài liệu sau khi bấm “Phân tích”.</p>}

@@ -16,31 +16,31 @@ npm run dev
 
 ## Scripts
 
-| Lệnh              | Mục đích             |
-| ----------------- | -------------------- |
-| `npm run dev`     | Chạy Vite dev server |
-| `npm run build`   | Build production     |
-| `npm run preview` | Preview bản build    |
+| Lệnh | Mục đích |
+| --- | --- |
+| `npm run dev` | Chạy Vite dev server |
+| `npm run build` | Build production |
+| `npm run preview` | Preview bản build |
 
 ## Biến môi trường
 
-| Biến                    | Mục đích                                                                 |
-| ----------------------- | ------------------------------------------------------------------------ |
-| `VITE_API_URL`          | Base URL của FastAPI backend                                             |
-| `VITE_MAX_UPLOAD_MB`    | Giới hạn upload hiển thị trên frontend, nên khớp `MAX_UPLOAD_MB` backend |
-| `VITE_GOOGLE_CLIENT_ID` | Google Identity Services OAuth Client ID                                 |
+| Biến | Mục đích |
+| --- | --- |
+| `VITE_API_URL` | Base URL của FastAPI backend |
+| `VITE_MAX_UPLOAD_MB` | Giới hạn upload hiển thị trên frontend, nên khớp `MAX_UPLOAD_MB` backend |
+| `VITE_GOOGLE_CLIENT_ID` | Google Identity Services OAuth Client ID |
 
 ## Tech stack
 
-| Thư viện       | Dùng để                                 |
-| -------------- | --------------------------------------- |
-| React 18       | UI components                           |
-| Vite 5         | Dev server/build tool                   |
-| React Router 6 | Routing và protected routes             |
-| Axios          | HTTP client cho API JSON/multipart/blob |
-| Tailwind CSS   | Styling utility-first                   |
-| react-markdown | Render markdown trong chat/answers      |
-| lucide-react   | Icon set                                |
+| Thư viện | Dùng để |
+| --- | --- |
+| React 18 | UI components |
+| Vite 5 | Dev server/build tool |
+| React Router 6 | Routing và protected routes |
+| Axios | HTTP client cho API JSON/multipart/blob |
+| Tailwind CSS | Styling utility-first |
+| react-markdown | Render markdown trong chat/answers |
+| lucide-react | Icon set |
 
 ## Cấu trúc chính
 
@@ -80,22 +80,22 @@ src/
 
 ## Routing hiện tại
 
-| Route                    | Page                 | Ghi chú                                          |
-| ------------------------ | -------------------- | ------------------------------------------------ |
-| `/login`                 | `LoginPage`          | Public                                           |
-| `/register`              | `RegisterPage`       | Public                                           |
-| `/forgot-password`       | `ForgotPasswordPage` | Public                                           |
-| `/`                      | redirect `/home`     | Cần đăng nhập                                    |
-| `/home`                  | `HomePage`           | Dashboard/trang chủ sau đăng nhập                |
-| `/notebook`              | `Notebookspage`      | Danh sách notebook/workspace                     |
-| `/notebooks/:notebookId` | `Notebookpage`       | Chi tiết notebook, upload/list tài liệu          |
-| `/research/:notebookId`  | `ResearchPage`       | RAG chat, sessions, notes, export/tạo học liệu   |
-| `/academic-lens`         | `AcademicLensPage`   | Document/web/vision chat + notepad               |
-| `/cross-analysis`        | `CrossAnalysisPage`  | So sánh, mâu thuẫn, tổng hợp, chat tài liệu      |
-| `/system-library`        | `SystemLibraryPage`  | Thư viện hệ thống, search/bookmark/download/link |
-| `/profile`               | `ProfilePage`        | Hồ sơ, avatar, password, 2FA, Google linking     |
-| `/admin`                 | `AdminPage`          | Chỉ user có `role === 'admin'`                   |
-| `*`                      | redirect `/home`     | Fallback                                         |
+| Route | Page | Ghi chú |
+| --- | --- | --- |
+| `/login` | `LoginPage` | Public |
+| `/register` | `RegisterPage` | Public |
+| `/forgot-password` | `ForgotPasswordPage` | Public |
+| `/` | redirect `/home` | Cần đăng nhập |
+| `/home` | `HomePage` | Dashboard/trang chủ sau đăng nhập |
+| `/notebook` | `Notebookspage` | Danh sách notebook/workspace |
+| `/notebooks/:notebookId` | `Notebookpage` | Chi tiết notebook, upload/list tài liệu |
+| `/research/:notebookId` | `ResearchPage` | RAG chat, sessions, notes, export/tạo học liệu |
+| `/academic-lens` | `AcademicLensPage` | Document/web/vision chat + notepad |
+| `/cross-analysis` | `CrossAnalysisPage` | So sánh, mâu thuẫn, tổng hợp, chat tài liệu |
+| `/system-library` | `SystemLibraryPage` | Thư viện hệ thống, search/bookmark/download/link |
+| `/profile` | `ProfilePage` | Hồ sơ, avatar, password, 2FA, Google linking |
+| `/admin` | `AdminPage` | Chỉ user có `role === 'admin'` |
+| `*` | redirect `/home` | Fallback |
 
 ## API service
 

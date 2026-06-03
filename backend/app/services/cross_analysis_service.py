@@ -25,7 +25,7 @@ MAX_SNIPPETS = 8
 
 CRITERIA_CATALOG = {
     "problem_motivation": {
-        "label": "Định vị Vấn đề và Động lực",
+        "label": "Vấn đề & Động lực nghiên cứu",
         "subquestions": "Mục tiêu cốt lõi; hai tài liệu có giải quyết cùng bài toán không; giả định ban đầu; động lực nghiên cứu khác nhau ra sao.",
     },
     "methodology": {
@@ -33,16 +33,40 @@ CRITERIA_CATALOG = {
         "subquestions": "Khác biệt thuật toán; kiến trúc/kỹ thuật; tính mới; chi phí tính toán/độ phức tạp.",
     },
     "datasets_experiments": {
-        "label": "Dữ liệu và Thiết lập Thực nghiệm",
+        "label": "Dữ liệu & Thiết lập thực nghiệm",
         "subquestions": "Datasets; baselines; metrics; mức độ công bằng trong setup.",
     },
     "results_tradeoffs": {
-        "label": "Phân tích Kết quả và Đánh đổi",
+        "label": "Kết quả & Đánh đổi",
         "subquestions": "Điều kiện chiến thắng; trade-offs; ablation study; tốc độ so với độ chính xác nếu có.",
     },
     "scalability_limitations": {
-        "label": "Khả năng Mở rộng và Hạn chế",
+        "label": "Khả năng mở rộng & Hạn chế",
         "subquestions": "Ứng dụng thực tiễn; rủi ro production; hạn chế chung; hướng nghiên cứu tương lai.",
+    },
+    "datasets_experimental_setup": {
+        "label": "Dữ liệu & Thiết lập thực nghiệm",
+        "subquestions": "Datasets; baselines; metrics; protocol thực nghiệm và mức độ công bằng trong setup.",
+    },
+    "novelty": {
+        "label": "Tính mới",
+        "subquestions": "Đóng góp mới, khác biệt so với nghiên cứu trước và mức độ sáng tạo của đề xuất.",
+    },
+    "complexity": {
+        "label": "Chi phí tính toán / Độ phức tạp",
+        "subquestions": "Tài nguyên, độ phức tạp thuật toán, latency, bộ nhớ và chi phí triển khai nếu có.",
+    },
+    "baselines_metrics": {
+        "label": "Baseline & Chỉ số đánh giá",
+        "subquestions": "Baseline so sánh, metric chính, protocol đánh giá và tính công bằng của phép đo.",
+    },
+    "practical_application": {
+        "label": "Khả năng ứng dụng thực tế",
+        "subquestions": "Tính khả thi khi triển khai, use case, ràng buộc vận hành và giá trị thực tế.",
+    },
+    "limitations": {
+        "label": "Hạn chế",
+        "subquestions": "Các điểm yếu được nêu, thiếu sót trong thực nghiệm và rủi ro khi diễn giải kết quả.",
     },
 }
 
@@ -222,6 +246,62 @@ async def _llm_json(system_prompt: str, user_prompt: str) -> dict[str, Any]:
     return _extract_json_object(response.choices[0].message.content or "{}")
 
 
+
+
+def _coerce_score(value: Any) -> float | None:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= score <= 1:
+        return None
+    return score
+
+
+def _valid_citation_scores(citations: list[dict[str, Any]] | None) -> list[float]:
+    scores: list[float] = []
+    for citation in citations or []:
+        if not isinstance(citation, dict):
+            continue
+        has_title = bool(_clean_text(citation.get("document_title") or citation.get("title") or citation.get("filename")))
+        has_location = citation.get("page_start") or citation.get("page_end") or citation.get("page") or citation.get("page_number") or citation.get("location")
+        score = _coerce_score(citation.get("score") if citation.get("score") is not None else citation.get("similarity"))
+        if has_title and has_location and score is not None:
+            scores.append(score)
+    return scores
+
+
+def _confidence_from_citations(citations: list[dict[str, Any]] | None) -> tuple[float | None, dict[str, Any]]:
+    scores = _valid_citation_scores(citations)
+    if not scores:
+        return None, {"citation_count": 0, "average_retrieval_score": None, "basis": "missing_retrieval_scores"}
+    average_score = sum(scores) / len(scores)
+    return round(average_score, 4), {"citation_count": len(scores), "average_retrieval_score": round(average_score, 4), "basis": "valid_citation_retrieval_scores"}
+
+
+def _fallback_criterion_label(criterion: str) -> str:
+    return _clean_text(str(criterion or "").replace("_", " ")).title()
+
+
+def _normalize_comparison_table(rows: list[Any], selected: list[dict[str, str]]) -> list[dict[str, Any]]:
+    label_by_key = {item["key"]: item["label"] for item in selected}
+    normalized = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        criterion = _clean_text(row.get("criterion"))
+        criterion_key = criterion if criterion in CRITERIA_CATALOG else next((key for key, item in CRITERIA_CATALOG.items() if criterion == item["label"]), criterion)
+        citations = row.get("citations") if isinstance(row.get("citations"), list) else []
+        confidence, confidence_basis = _confidence_from_citations(citations)
+        normalized.append({
+            **row,
+            "criterion": criterion_key,
+            "criterion_label": label_by_key.get(criterion_key) or CRITERIA_CATALOG.get(criterion_key, {}).get("label") or _fallback_criterion_label(criterion_key),
+            "confidence": confidence,
+            "confidence_basis": confidence_basis,
+        })
+    return normalized
+
 def _citation_seed(doc_a: dict[str, Any], doc_b: dict[str, Any]) -> list[dict[str, Any]]:
     citations = []
     for label, doc in (("A", doc_a), ("B", doc_b)):
@@ -261,7 +341,7 @@ Trả JSON dạng:
 """.strip(),
     )
     return {
-        "comparison_table": payload.get("comparison_table") or [],
+        "comparison_table": _normalize_comparison_table(payload.get("comparison_table") or [], selected),
         "summary": payload.get("summary") or "",
         "warnings": payload.get("warnings") or [],
         "citations": payload.get("citations") or _citation_seed(doc_a, doc_b),

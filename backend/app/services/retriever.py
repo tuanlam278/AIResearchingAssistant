@@ -129,14 +129,15 @@ async def load_selected_document_context(notebook_id: str, document_ids: List[st
     return await asyncio.to_thread(_call)
 
 
-async def retrieve_rag_context(query_vector: List[float], notebook_id: str, document_ids: List[str] | None = None) -> RetrievalResult:
+async def retrieve_rag_context(query_vector: List[float], notebook_id: str, document_ids: List[str] | None = None, citation_threshold: float | None = 0) -> RetrievalResult:
     """Retrieve selected-document context and classify out-of-scope without blocking.
 
     First uses the production `MIN_SIMILARITY` threshold. If that returns no chunks,
     it retries with threshold 0 to obtain the nearest selected-document snippets so
     the answer can still be generated with a warning instead of failing the request.
     """
-    chunks = await retrieve_chunks(query_vector, notebook_id, document_ids)
+    threshold = 0 if citation_threshold is None else citation_threshold
+    chunks = await retrieve_chunks(query_vector, notebook_id, document_ids, match_threshold=threshold)
     if not chunks:
         chunks = await retrieve_chunks(
             query_vector,
@@ -145,7 +146,7 @@ async def retrieve_rag_context(query_vector: List[float], notebook_id: str, docu
             match_threshold=0,
             match_count_multiplier=8 if document_ids else 2,
         )
-    result = analyze_retrieval_scope(chunks)
+    result = analyze_retrieval_scope(chunks, threshold)
     if not result.chunks and document_ids:
         fallback_chunks = await load_selected_document_context(notebook_id, document_ids, settings.TOP_K_CHUNKS)
         return RetrievalResult(chunks=[chunk for chunk in fallback_chunks if _chunk_has_text(chunk)], top_score=None, is_out_of_scope=True)

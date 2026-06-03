@@ -103,8 +103,8 @@ def _answer_already_has_warning(answer: str) -> bool:
     return (answer or "").lstrip().startswith(OUT_OF_SCOPE_WARNING)
 
 
-def _fetch_document_titles(chunks: list[dict]) -> dict[str, str]:
-    """Best-effort filename lookup for citation metadata."""
+def _fetch_document_titles(chunks: list[dict]) -> dict[str, dict[str, str]]:
+    """Best-effort filename lookup for citation metadata; no placeholder titles."""
     doc_ids = sorted({str(c.get("doc_id")) for c in chunks if c.get("doc_id")})
     if not doc_ids:
         return {}
@@ -121,31 +121,44 @@ def _fetch_document_titles(chunks: list[dict]) -> dict[str, str]:
         return {}
 
     rows = getattr(resp, "data", None) or []
-    return {str(row["id"]): row.get("filename") or "Tài liệu" for row in rows}
+    return {
+        str(row["id"]): {"document_title": row.get("filename") or "", "filename": row.get("filename") or ""}
+        for row in rows
+        if row.get("id") and row.get("filename")
+    }
 
 
 def _build_citations(chunks: list[dict]) -> list[dict]:
     doc_titles = _fetch_document_titles(chunks)
     citations = []
 
-    for index, chunk in enumerate(chunks, start=1):
+    for chunk in chunks:
         doc_id = str(chunk.get("doc_id") or "") or None
+        title_meta = doc_titles.get(str(doc_id)) if doc_id else None
+        if not title_meta:
+            continue
         page_number = chunk.get("page_number")
-        content = chunk.get("content") or ""
+        content = (chunk.get("content") or "").strip()
+        if not content and chunk.get("similarity") is None:
+            continue
+        citation_index = len(citations) + 1
         citations.append(
             {
-                "id": str(chunk.get("id") or index),
-                "chunk_id": str(chunk.get("id") or index),
-                "citation_index": index,
+                "id": str(chunk.get("id") or citation_index),
+                "chunk_id": str(chunk.get("id") or citation_index),
+                "citation_index": citation_index,
+                "index": citation_index,
                 "document_id": doc_id,
-                "document_title": doc_titles.get(str(doc_id), "Tài liệu"),
-                "section": chunk.get("section", "Unknown"),
+                "document_title": title_meta["document_title"],
+                "filename": title_meta["filename"],
+                "section": chunk.get("section") or "",
+                "location": chunk.get("section") or "",
                 "page_start": page_number,
                 "page_end": page_number,
                 "page": page_number,
                 "snippet": content,
                 "content": content,
-                "score": round(float(chunk.get("similarity", 0)), 4)
+                "score": round(float(chunk.get("similarity")), 4)
                 if chunk.get("similarity") is not None
                 else None,
             }
@@ -173,7 +186,7 @@ async def ask(
         )
 
     # 2. Vector search theo notebook_id (tìm trên tất cả file trong notebook)
-    retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids)
+    retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids, request.citation_threshold)
     chunks = retrieval.chunks
     warning = _warning_for_scope(retrieval.is_out_of_scope)
 
@@ -234,7 +247,7 @@ async def ask_stream(
                 return
 
             yield _sse({"type": "status", "status": "retrieving", "message": "Đang tìm đoạn liên quan..."})
-            retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids)
+            retrieval = await retrieve_rag_context(query_vector, request.notebook_id, selected_document_ids, request.citation_threshold)
             chunks = retrieval.chunks
             warning = _warning_for_scope(retrieval.is_out_of_scope)
 

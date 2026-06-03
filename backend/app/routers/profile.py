@@ -57,6 +57,12 @@ def _safe_profile(row: dict | None, user: dict) -> dict:
         "preferred_theme": row.get("preferred_theme") or "system",
         "preferred_language": row.get("preferred_language") or "vi",
         "has_password": bool(row.get("password_login_enabled", False)),
+        "canUploadLibraryDocuments": row.get("can_upload_library_documents", row.get("can_publish_documents", True)),
+        "can_upload_library_documents": row.get("can_upload_library_documents", row.get("can_publish_documents", True)),
+        "canPublishDocuments": row.get("can_publish_documents", row.get("can_upload_library_documents", True)),
+        "can_publish_documents": row.get("can_publish_documents", row.get("can_upload_library_documents", True)),
+        "publishBlockedReason": row.get("publish_blocked_reason"),
+        "publishBlockedAt": row.get("publish_blocked_at"),
         "default_password_must_change": bool(row.get("default_password_must_change", False)),
     }
 

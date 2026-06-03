@@ -165,6 +165,12 @@ def _user_payload(
         "email": email,
         "avatar_url": profile.get("avatar_url"),
         "role": role,
+        "canUploadLibraryDocuments": profile.get("can_upload_library_documents", profile.get("can_publish_documents", True)),
+        "can_upload_library_documents": profile.get("can_upload_library_documents", profile.get("can_publish_documents", True)),
+        "canPublishDocuments": profile.get("can_publish_documents", profile.get("can_upload_library_documents", True)),
+        "can_publish_documents": profile.get("can_publish_documents", profile.get("can_upload_library_documents", True)),
+        "publishBlockedReason": profile.get("publish_blocked_reason"),
+        "publishBlockedAt": profile.get("publish_blocked_at"),
     }
 
 

@@ -39,24 +39,24 @@ uvicorn app.main:app --reload
 
 Các biến mẫu nằm trong `.env.example`.
 
-| Biến                                                                                           | Mục đích                                                 |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `GOOGLE_API_KEY`                                                                               | Gemini embedding, RAG generation và vision/OCR fallback  |
-| `VISION_MODEL`                                                                                 | Model vision, mặc định `gemini-1.5-flash`                |
-| `GROQ_API_KEY`                                                                                 | Tạo flashcards, quiz và test                             |
-| `GROQ_FLASHCARD_MODEL`                                                                         | Model Groq cho học liệu, mặc định `llama-3.1-8b-instant` |
-| `SUPABASE_URL`                                                                                 | URL Supabase project                                     |
-| `SUPABASE_SERVICE_KEY`                                                                         | Service role key, chỉ dùng server-side                   |
-| `SUPABASE_ANON_KEY`                                                                            | Anon key cho một số auth flow                            |
-| `CORS_ORIGINS`                                                                                 | Danh sách frontend origin được phép gọi API              |
-| `MAX_UPLOAD_MB`                                                                                | Giới hạn dung lượng upload                               |
-| `RAG_RELEVANCE_THRESHOLD`, `TOP_K_CHUNKS`, `MIN_SIMILARITY`                                    | Cấu hình retrieval/RAG                                   |
-| `GOOGLE_CLIENT_ID`                                                                             | Google OAuth web client ID cho Google login/linking      |
-| `JWT_SECRET_KEY`                                                                               | Secret ký session token nội bộ                           |
-| `APP_ENV`, `ENABLE_DEV_AUTH_BYPASS`                                                            | Điều khiển bypass/dev auth safety                        |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`                            | Gửi email OTP/quên mật khẩu/2FA                          |
-| `AVATAR_STORAGE_BUCKET`                                                                        | Bucket lưu avatar                                        |
-| `SYSTEM_LIBRARY_ADMIN_EMAIL`, `SYSTEM_LIBRARY_ADMIN_PASSWORD`, `SYSTEM_LIBRARY_STORAGE_BUCKET` | Admin và storage cho system library                      |
+| Biến | Mục đích |
+| --- | --- |
+| `GOOGLE_API_KEY` | Gemini embedding, RAG generation và vision/OCR fallback |
+| `VISION_MODEL` | Model vision, mặc định `gemini-1.5-flash` |
+| `GROQ_API_KEY` | Tạo flashcards, quiz và test |
+| `GROQ_FLASHCARD_MODEL` | Model Groq cho học liệu, mặc định `llama-3.1-8b-instant` |
+| `SUPABASE_URL` | URL Supabase project |
+| `SUPABASE_SERVICE_KEY` | Service role key, chỉ dùng server-side |
+| `SUPABASE_ANON_KEY` | Anon key cho một số auth flow |
+| `CORS_ORIGINS` | Danh sách frontend origin được phép gọi API |
+| `MAX_UPLOAD_MB` | Giới hạn dung lượng upload |
+| `RAG_RELEVANCE_THRESHOLD`, `TOP_K_CHUNKS`, `MIN_SIMILARITY` | Cấu hình retrieval/RAG |
+| `GOOGLE_CLIENT_ID` | Google OAuth web client ID cho Google login/linking |
+| `JWT_SECRET_KEY` | Secret ký session token nội bộ |
+| `APP_ENV`, `ENABLE_DEV_AUTH_BYPASS` | Điều khiển bypass/dev auth safety |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | Gửi email OTP/quên mật khẩu/2FA |
+| `AVATAR_STORAGE_BUCKET` | Bucket lưu avatar |
+| `SYSTEM_LIBRARY_ADMIN_EMAIL`, `SYSTEM_LIBRARY_ADMIN_PASSWORD`, `SYSTEM_LIBRARY_STORAGE_BUCKET` | Admin và storage cho system library |
 
 > Không commit key thật. `SUPABASE_SERVICE_KEY`, `JWT_SECRET_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY` và SMTP password phải được cấu hình bằng secret manager ở production.
 
@@ -99,19 +99,19 @@ app/
 
 ## API groups chính
 
-| Nhóm              | Prefix                      | Chức năng                                                                                    |
-| ----------------- | --------------------------- | -------------------------------------------------------------------------------------------- |
-| Auth              | `/api/auth`                 | register, login, me, logout, Google login, password reset OTP                                |
-| Profile           | `/api/profile`              | profile, avatar, đổi mật khẩu, email 2FA, Google linking, preferences, export/delete account |
-| Notebooks         | `/api/notebooks`            | CRUD notebook, upload tài liệu, list documents, link system document                         |
-| Documents         | `/api/documents`            | list, delete, summarize document                                                             |
-| Chat              | `/api/chat`                 | `POST /ask`, `POST /ask/stream`                                                              |
-| Workspaces        | `/api/workspaces`           | document summary, research sessions, notes                                                   |
-| Research Sessions | `/api/research-sessions`    | session metadata, messages, notes, DOCX export, flashcards/quiz/test                         |
-| System Library    | `/api/system-library`       | list/search/download/bookmark tài liệu hệ thống                                              |
-| Admin             | `/api/admin/system-library` | import/list/delete tài liệu hệ thống                                                         |
-| Cross Analysis    | `/api/cross-analysis`       | upload, compare, conflicts, synthesis, chat, preview                                         |
-| Academic Lens     | `/api/academic-lens`        | upload/preview, document chat, web chat, vision chat, web context, notepad                   |
+| Nhóm | Prefix | Chức năng |
+| --- | --- | --- |
+| Auth | `/api/auth` | register, login, me, logout, Google login, password reset OTP |
+| Profile | `/api/profile` | profile, avatar, đổi mật khẩu, email 2FA, Google linking, preferences, export/delete account |
+| Notebooks | `/api/notebooks` | CRUD notebook, upload tài liệu, list documents, link system document |
+| Documents | `/api/documents` | list, delete, summarize document |
+| Chat | `/api/chat` | `POST /ask`, `POST /ask/stream` |
+| Workspaces | `/api/workspaces` | document summary, research sessions, notes |
+| Research Sessions | `/api/research-sessions` | session metadata, messages, notes, DOCX export, flashcards/quiz/test |
+| System Library | `/api/system-library` | list/search/download/bookmark tài liệu hệ thống |
+| Admin | `/api/admin/system-library` | import/list/delete tài liệu hệ thống |
+| Cross Analysis | `/api/cross-analysis` | upload, compare, conflicts, synthesis, chat, preview |
+| Academic Lens | `/api/academic-lens` | upload/preview, document chat, web chat, vision chat, web context, notepad |
 
 ## File upload và RAG
 

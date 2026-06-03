@@ -19,7 +19,6 @@ const FALLBACK_SUGGESTED_PROMPTS = [
 ];
 
 const QUICK_ACTIONS = [
-  { id: "compare", icon: "⇄", label: "So sánh tài liệu", requiresTwo: true, prompt: "Hãy so sánh các tài liệu đã chọn. Trình bày điểm giống nhau, khác nhau, phương pháp nghiên cứu, kết quả chính, đóng góp và hạn chế của từng tài liệu." },
   { id: "main_points", icon: "☑", label: "Trình bày ý chính", prompt: "Hãy trình bày các ý chính của tài liệu đã chọn theo dạng bullet rõ ràng, dễ hiểu." },
   { id: "terms", icon: "?", label: "Giải thích thuật ngữ khó", prompt: "Hãy tìm và giải thích các thuật ngữ học thuật khó trong tài liệu đã chọn bằng ngôn ngữ dễ hiểu." },
   { id: "quiz_prompt", icon: "❔", label: "Tạo câu hỏi ôn tập", prompt: "Hãy tạo 1 -> 2 câu hỏi ôn tập từ tài liệu đã chọn, kèm đáp án ngắn." },
@@ -27,7 +26,6 @@ const QUICK_ACTIONS = [
   { id: "outline", icon: "☷", label: "Tạo dàn ý nghiên cứu", prompt: "Hãy tạo một dàn ý nghiên cứu dựa trên tài liệu đã chọn, gồm các mục lớn, ý phụ và gợi ý triển khai." },
   { id: "next_questions", icon: "✦", label: "Gợi ý câu hỏi tiếp theo", prompt: "Dựa trên các tài liệu đã chọn và cuộc trò chuyện hiện tại, hãy gợi ý các câu hỏi tiếp theo mà người dùng nên hỏi để hiểu sâu hơn nội dung nghiên cứu." },
   { id: "quiz", icon: "☑", label: "Tạo trắc nghiệm", special: "quiz" },
-  { id: "test", icon: "📝", label: "Tạo bài kiểm tra", special: "test" },
   { id: "flashcards", icon: "▣", label: "Flashcard", special: "flashcards" },
 ];
 
@@ -62,34 +60,57 @@ function getCitationIndex(source, index) {
   return source?.citation_index || source?.index || index + 1;
 }
 
+function hasCitationTitle(citation = {}) {
+  return Boolean(String(citation.document_title || citation.filename || citation.title || "").trim());
+}
+
+function hasCitationLocation(citation = {}) {
+  return Boolean(
+    citation.page_start ??
+    citation.page_end ??
+    citation.page ??
+    citation.page_number ??
+    citation.location ??
+    citation.section
+  );
+}
+
+function hasCitationDetail(citation = {}) {
+  return Boolean(String(citation.snippet || citation.summary || citation.content || "").trim()) || citation.score != null || citation.confidence != null || citation.relevance != null;
+}
+
+function isValidCitation(citation = {}) {
+  return hasCitationTitle(citation) && (hasCitationLocation(citation) || hasCitationDetail(citation));
+}
+
 function normalizeSources(rawSources = []) {
-  return rawSources.map((source, index) => {
-    const citationIndex = getCitationIndex(source, index);
-    return {
-      ...source,
-      citation_index: citationIndex,
-      id: source.id || source.chunk_id || source.citation_id || `${citationIndex}`,
-      chunk_id: source.chunk_id || source.id || source.citation_id,
-      document_id: source.document_id || source.doc_id,
-      document_title:
-        source.document_title ||
-        source.title ||
-        source.source_name ||
-        source.filename ||
-        `Tài liệu ${citationIndex}`,
-      page_start: source.page_start ?? source.page ?? source.page_number,
-      page_end: source.page_end ?? source.page ?? source.page_number,
-      snippet: source.snippet || source.summary || source.content || "",
-      score: source.score ?? source.relevance,
-    };
-  });
+  return rawSources
+    .map((source, index) => {
+      const citationIndex = getCitationIndex(source, index);
+      const documentTitle = source.document_title || source.title || source.source_name || source.filename || "";
+      return {
+        ...source,
+        citation_index: citationIndex,
+        id: source.id || source.chunk_id || source.citation_id || `${citationIndex}`,
+        chunk_id: source.chunk_id || source.id || source.citation_id,
+        document_id: source.document_id || source.doc_id,
+        document_title: documentTitle,
+        filename: source.filename || source.source_name || "",
+        page_start: source.page_start ?? source.page ?? source.page_number,
+        page_end: source.page_end ?? source.page ?? source.page_number,
+        location: source.location || source.section || "",
+        snippet: source.snippet || source.summary || source.content || "",
+        score: source.score ?? source.relevance,
+      };
+    })
+    .filter(isValidCitation);
 }
 
 function formatCitationPage(citation = {}) {
   const page = citation.page_start ?? citation.page ?? citation.page_number;
   const pageEnd = citation.page_end;
-  if (!page) return "Không rõ trang";
-  return pageEnd && pageEnd !== page ? `Trang ${page}-${pageEnd}` : `Trang ${page}`;
+  if (page) return pageEnd && pageEnd !== page ? `Trang ${page}-${pageEnd}` : `Trang ${page}`;
+  return citation.location ? `Vị trí: ${citation.location}` : "Không rõ trang";
 }
 
 function formatCitationConfidence(citation = {}) {
@@ -102,7 +123,7 @@ function formatCitationConfidence(citation = {}) {
 
 function citationTooltip(citation) {
   return [
-    citation.document_title || "Tài liệu",
+    citation.document_title || citation.filename,
     formatCitationPage(citation),
     formatCitationConfidence(citation),
   ].join(" · ");
@@ -121,7 +142,7 @@ function CitationHoverCard({ citation }) {
         [{citation.citation_index}]
       </button>
       <span className="rp-citation-popover" role="tooltip">
-        <strong>{citation.document_title || "Tài liệu"}</strong>
+        <strong>{citation.document_title || citation.filename}</strong>
         <span className="rp-citation-popover-meta">
           <span>{formatCitationPage(citation)}</span>
           <span>{formatCitationConfidence(citation)}</span>
@@ -143,12 +164,13 @@ function isSafeExternalHref(href = "") {
 }
 
 function MarkdownContent({ content = "", citations = [] }) {
+  const validCitations = useMemo(() => citations.filter(isValidCitation), [citations]);
   const citationMap = useMemo(
-    () => new Map(citations.map((citation) => [String(citation.citation_index), citation])),
-    [citations]
+    () => new Map(validCitations.map((citation) => [String(citation.citation_index), citation])),
+    [validCitations]
   );
   const markdown = useMemo(
-    () => (content || "").replace(/\[(\d+)\]/g, (match, value) => (citationMap.has(String(value)) ? `[${match}](citation:${value})` : match)),
+    () => (content || "").replace(/\[(\d+)\]/g, (match, value) => (citationMap.has(String(value)) ? `[${match}](citation:${value})` : "")),
     [content, citationMap]
   );
 
@@ -179,17 +201,18 @@ function MarkdownContent({ content = "", citations = [] }) {
 }
 
 function AnswerWithCitations({ content, citations = [], warning = null }) {
+  const validCitations = useMemo(() => citations.filter(isValidCitation), [citations]);
   const hasInlineCitation = /\[(\d+)\]/.test(content || "");
   const shouldShowWarning = warning && !hasWarningInContent(content);
 
   return (
     <>
       {shouldShowWarning && <div className="rp-rag-warning" role="note">⚠ {warning}</div>}
-      <MarkdownContent content={content || ""} citations={citations} />
-      {!hasInlineCitation && citations.length > 0 && (
+      <MarkdownContent content={content || ""} citations={validCitations} />
+      {!hasInlineCitation && validCitations.length > 0 && (
         <span className="rp-citation-footer">
           Nguồn:{" "}
-          {citations.map((citation) => (
+          {validCitations.map((citation) => (
             <CitationHoverCard
               key={citation.citation_index}
               citation={citation}
@@ -238,7 +261,7 @@ function CitationDetail({ citation, onClose }) {
         <span>Nguồn [{citation.citation_index}]</span>
         <button type="button" onClick={onClose} aria-label="Đóng nguồn trích dẫn">×</button>
       </div>
-      <div className="rp-citation-detail-title">{citation.document_title || "Tài liệu"}</div>
+      <div className="rp-citation-detail-title">{citation.document_title || citation.filename}</div>
       <div className="rp-citation-detail-meta">
         {page && <span>tr. {pageEnd && pageEnd !== page ? `${page}-${pageEnd}` : page}</span>}
         {scoreText && <span>{scoreText}</span>}
@@ -361,7 +384,6 @@ function QuickActionsSidebar({
                   {renderQuickCount({ value: quizCount, onChange: onQuizCountChange, label: "Số câu", helper: "Tối đa 5 câu cho quiz nhanh." })}
                 </div>
               )}
-              {action.special === "test" && <small className="rp-action-subnote">Tạo đúng 10 câu phối hợp nhiều dạng.</small>}
             </div>
           );
         })}
@@ -577,7 +599,8 @@ function NotesPanel({
           </div>
         ) : (
           notes.map((note) => {
-            const citationCount = Array.isArray(note.citations) ? note.citations.length : 0;
+            const validNoteCitations = Array.isArray(note.citations) ? note.citations.filter(isValidCitation) : [];
+            const citationCount = validNoteCitations.length;
             const isEditing = editingNoteId === note.id;
 
             return (
@@ -686,14 +709,14 @@ function NotesPanel({
               </div>
             ) : (
               <>
-                <div className="rp-note-modal-content rp-app-scrollbar"><MarkdownContent content={selectedNote.content} /></div>
-                {Array.isArray(selectedNote.citations) && selectedNote.citations.length > 0 && (
+                <div className="rp-note-modal-content rp-app-scrollbar"><MarkdownContent content={selectedNote.content} citations={Array.isArray(selectedNote.citations) ? selectedNote.citations : []} /></div>
+                {Array.isArray(selectedNote.citations) && selectedNote.citations.filter(isValidCitation).length > 0 && (
                   <div className="rp-note-modal-sources">
                     <h3>Nguồn trích dẫn</h3>
-                    {selectedNote.citations.map((citation, index) => (
-                      <div key={`${citation.document_title || 'source'}-${index}`} className="rp-note-modal-source">
-                        <strong>{citation.document_title || citation.filename || 'Tài liệu'}</strong>
-                        {(citation.page_start || citation.page) && <span>tr. {citation.page_start || citation.page}</span>}
+                    {selectedNote.citations.filter(isValidCitation).map((citation, index) => (
+                      <div key={`${citation.document_title || citation.filename || 'source'}-${index}`} className="rp-note-modal-source">
+                        <strong>{citation.document_title || citation.filename}</strong>
+                        <span>{formatCitationPage(citation)}</span>
                         {(citation.snippet || citation.summary || citation.content) && <p>{citation.snippet || citation.summary || citation.content}</p>}
                       </div>
                     ))}
@@ -826,7 +849,6 @@ export default function ResearchPage() {
   const [quizType, setQuizType] = useState("mixed");
   const [quizModal, setQuizModal] = useState(null);
   const [generatingQuiz, setGeneratingQuiz] = useState(false);
-  const [generatingTest, setGeneratingTest] = useState(false);
   const [savingQuiz, setSavingQuiz] = useState(false);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [loadingSessionId, setLoadingSessionId] = useState(null);
@@ -1229,32 +1251,8 @@ export default function ResearchPage() {
     }
   };
 
-  const handleGenerateTest = async () => {
-    if (!researchSessionId) {
-      showToast("error", "Không tìm thấy phiên nghiên cứu để tạo bài kiểm tra.");
-      return;
-    }
-    if (!selectedDocumentIds.length) {
-      showToast("error", "Vui lòng chọn tài liệu trước khi tạo bài kiểm tra.");
-      return;
-    }
-    setGeneratingTest(true);
-    showToast("success", "Đang tạo bài kiểm tra từ tài liệu...");
-    try {
-      const result = await api.generateTest(researchSessionId, { selected_document_ids: selectedDocumentIds, count: 10 }, token);
-      const test = result?.test;
-      if (!test?.questions || test.questions.length !== 10) throw new Error("Bài kiểm tra chưa đủ 10 câu.");
-      setQuizModal({ mode: "test", title: test.title || "Bài kiểm tra từ tài liệu đã chọn", quiz: test, warning: result?.warning || null, canSave: true });
-      showToast("success", "Đã tạo bài kiểm tra 10 câu.");
-    } catch (err) {
-      showToast("error", err.message || "Không thể tạo bài kiểm tra.");
-    } finally {
-      setGeneratingTest(false);
-    }
-  };
-
   const runQuickAction = async (action) => {
-    if (loading || generatingFlashcards || generatingQuiz || generatingTest) return;
+    if (loading || generatingFlashcards || generatingQuiz) return;
     if (!selectedDocumentIds.length) {
       showToast("error", "Vui lòng chọn ít nhất một tài liệu để sử dụng tính năng này.");
       return;
@@ -1269,10 +1267,6 @@ export default function ResearchPage() {
     }
     if (action.special === "quiz") {
       await handleGenerateQuiz();
-      return;
-    }
-    if (action.special === "test") {
-      await handleGenerateTest();
       return;
     }
     const prompt = action.prompt;
@@ -1855,7 +1849,7 @@ export default function ResearchPage() {
           <QuickActionsSidebar
             actions={QUICK_ACTIONS}
             selectedDocumentIds={selectedDocumentIds}
-            loading={loading || generatingFlashcards || generatingQuiz || generatingTest}
+            loading={loading || generatingFlashcards || generatingQuiz}
             onAction={runQuickAction}
             flashcardCount={flashcardCount}
             onFlashcardCountChange={setFlashcardCount}

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, field_validator, EmailStr
 from pydantic.generics import GenericModel
 from typing import List, Optional, Literal, TypeVar, Generic, Any
 from datetime import datetime
@@ -108,6 +108,20 @@ class AskRequest(BaseModel):
     chat_history: List[ChatMessage] = Field(default_factory=list, max_length=20)
     selected_document_ids: List[str] = Field(default_factory=list, max_length=50)
     research_session_id: Optional[str] = None
+    citation_threshold: float = 0
+
+    @field_validator("citation_threshold", mode="before")
+    @classmethod
+    def normalize_citation_threshold(cls, value):
+        if value in (None, ""):
+            return 0
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return 0
+        if parsed != parsed or parsed < 0:
+            return 0
+        return parsed
 
 
 class SourceChunk(BaseModel):
