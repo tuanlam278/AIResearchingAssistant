@@ -24,6 +24,7 @@ class CreateResearchSessionRequest(BaseModel):
 class UpdateResearchSessionRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     is_starred: bool | None = None
+    selected_document_ids: List[str] | None = Field(default=None, min_length=0, max_length=50)
 
 
 def _supabase_response_data(resp: Any) -> tuple[Any, Any]:
@@ -193,6 +194,10 @@ async def update_research_session(
         updates["title"] = body.title.strip()
     if body.is_starred is not None:
         updates["is_starred"] = body.is_starred
+    if body.selected_document_ids is not None:
+        session = _get_owned_session(session_id, user_id)
+        selected_docs = _load_selected_documents(session.get("notebook_id"), body.selected_document_ids) if body.selected_document_ids else []
+        updates["selected_document_ids"] = [str(doc.get("id")) for doc in selected_docs]
 
     if len(updates) == 1:
         raise HTTPException(status_code=400, detail={"code": "NO_UPDATES", "message": "Không có dữ liệu cập nhật"})

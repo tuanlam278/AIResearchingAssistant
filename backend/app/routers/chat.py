@@ -167,6 +167,25 @@ def _build_citations(chunks: list[dict]) -> list[dict]:
     return citations
 
 
+def _build_retrieval_diagnostics(retrieval, citations: list[dict], selected_document_ids: list[str], mode: str = "vector") -> dict:
+    used_doc_ids = []
+    for citation in citations or []:
+        doc_id = citation.get("document_id") or citation.get("doc_id")
+        if doc_id and str(doc_id) not in used_doc_ids:
+            used_doc_ids.append(str(doc_id))
+    warning = _warning_for_scope(getattr(retrieval, "is_out_of_scope", False))
+    if not used_doc_ids:
+        used_doc_ids = [str(doc_id) for doc_id in selected_document_ids or [] if doc_id]
+    return {
+        "top_score": getattr(retrieval, "top_score", None),
+        "chunks_used": len(getattr(retrieval, "chunks", []) or []),
+        "selected_document_ids_used": used_doc_ids,
+        "retrieval_mode": mode,
+        "is_out_of_scope": bool(getattr(retrieval, "is_out_of_scope", False)),
+        "warning": warning,
+    }
+
+
 @router.post("/ask", response_model=dict)
 async def ask(
     request: AskRequest,
@@ -191,6 +210,7 @@ async def ask(
     warning = _warning_for_scope(retrieval.is_out_of_scope)
 
     citations = _build_citations(chunks)
+    retrieval_diagnostics = _build_retrieval_diagnostics(retrieval, citations, selected_document_ids)
 
     # 3. Generate answer
     try:
@@ -221,6 +241,7 @@ async def ask(
             "answer": answer_text,
             "sources": citations,
             "citations": citations,
+            "retrieval_diagnostics": retrieval_diagnostics,
             "suggested_prompts": suggested_prompts,
             "tokens_used": answer.get("tokens_used"),
         },
@@ -252,7 +273,9 @@ async def ask_stream(
             warning = _warning_for_scope(retrieval.is_out_of_scope)
 
             citations = _build_citations(chunks)
+            retrieval_diagnostics = _build_retrieval_diagnostics(retrieval, citations, selected_document_ids)
             yield _sse({"type": "sources", "sources": citations, "citations": citations})
+            yield _sse({"type": "retrieval_diagnostics", "retrieval_diagnostics": retrieval_diagnostics})
             if warning:
                 yield _sse({"type": "warning", "warning": warning, "message": warning})
             yield _sse({"type": "status", "status": "generating", "message": "Đang tạo câu trả lời..."})
@@ -272,7 +295,7 @@ async def ask_stream(
             suggested_prompts = generate_suggested_prompts(request.question, full_answer, chunks)
             _persist_session_messages(request.research_session_id, request.question, full_answer if "full_answer" in locals() else "", citations)
             yield _sse({"type": "suggested_prompts", "suggested_prompts": suggested_prompts})
-            yield _sse({"type": "done", "warning": warning, "suggested_prompts": suggested_prompts})
+            yield _sse({"type": "done", "warning": warning, "suggested_prompts": suggested_prompts, "retrieval_diagnostics": retrieval_diagnostics})
 
         except asyncio.CancelledError:
             logger.info("Chat stream cancelled by client disconnect")

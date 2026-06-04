@@ -49,7 +49,7 @@ function captureTextFallback(target, drag) {
   if (!text.trim()) return null;
   return {
     dataUrl: drawTextCrop(text.slice(0, 3500), drag),
-    warning: 'Trình duyệt không cho phép chụp pixel trực tiếp nếu không dùng thư viện/screen-capture. Ảnh này được dựng từ văn bản thật trong vùng reader; PDF/iframe cần Vision API nhận file ảnh/PDF render từ backend để crop chính xác.',
+    warning: 'Trình duyệt không cho phép chụp pixel trực tiếp nếu không dùng thư viện/screen-capture. Ảnh này được dựng từ văn bản thật trong reader, không phải pixel gốc. PDF/iframe cần PDF.js/canvas để crop chính xác.',
   };
 }
 
@@ -78,7 +78,7 @@ export default function SnippingOverlay({ active, targetRef, onCancel, onCapture
     const relativeRect = targetBox ? { ...drag, left: drag.left - targetBox.left + target.scrollLeft, top: drag.top - targetBox.top + target.scrollTop } : drag;
     const hasPdfFrame = Boolean(target?.querySelector?.('iframe'));
     if (hasPdfFrame) {
-      onCapture({ rect: relativeRect, error: 'Không thể chụp pixel từ PDF viewer/iframe bằng JavaScript trình duyệt do sandbox/CORS. Hãy cấu hình backend render PDF sang ảnh hoặc upload ảnh trực tiếp cho Vision API.' });
+      onCapture({ rect: relativeRect, error: 'Không thể chụp trực tiếp vùng PDF khi đang dùng iframe. Hãy bật chế độ PDF.js viewer/canvas hoặc dùng ảnh/document text; UI không gửi crop PDF giả tới Vision API.' });
     } else {
       const textCapture = captureTextFallback(target, drag);
       if (textCapture?.dataUrl) {

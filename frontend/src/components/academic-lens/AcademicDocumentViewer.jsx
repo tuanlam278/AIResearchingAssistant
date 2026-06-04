@@ -13,9 +13,11 @@ function previewText(document) {
   return document?.extracted_text || document?.preview_text || (document?.snippets || []).map((s) => s.content).filter(Boolean).join('\n\n') || document?.summary || '';
 }
 
-export default function AcademicDocumentViewer({ document, snipping, onStopSnipping, onSnip, onSelectionAction }) {
+export default function AcademicDocumentViewer({ document, snipping, onStopSnipping, onSnip, onSelectionAction, activeCitation }) {
   const viewerRef = useRef(null);
+  const citationRef = useRef(null);
   const [selection, setSelection] = useState(null);
+  const pdf = isPdf(document);
 
   useEffect(() => {
     const close = (event) => {
@@ -32,6 +34,15 @@ export default function AcademicDocumentViewer({ document, snipping, onStopSnipp
     viewer.addEventListener('scroll', closeOnScroll, { passive: true });
     return () => viewer.removeEventListener('scroll', closeOnScroll);
   }, []);
+
+  useEffect(() => {
+    if (!activeCitation || !viewerRef.current) return;
+    citationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (pdf && document?.preview_url && activeCitation.page_start && !previewText(document)) {
+      const iframe = viewerRef.current.querySelector('iframe');
+      if (iframe) iframe.src = `${document.preview_url}#page=${activeCitation.page_start}&toolbar=1&navpanes=1&scrollbar=1&view=FitH`;
+    }
+  }, [activeCitation, document, document?.preview_url, pdf]);
 
   const handleMouseUp = () => {
     const selected = window.getSelection?.();
@@ -50,16 +61,22 @@ export default function AcademicDocumentViewer({ document, snipping, onStopSnipp
         <div className="al-empty">
           <FileText size={44} />
           <h3>Chọn hoặc tải tài liệu để bắt đầu đọc với Kính lúp Học thuật.</h3>
-          <p>Viewer hỗ trợ PDF bằng trình xem của trình duyệt và DOCX/TXT/MD bằng nội dung text đã trích xuất.</p>
+          <p>Viewer hỗ trợ PDF bằng trình xem cơ bản của trình duyệt và DOCX/TXT/MD bằng nội dung text đã trích xuất.</p>
         </div>
-      ) : isPdf(document) && document.preview_url ? (
-        <iframe className="al-pdf-frame app-scrollbar" src={`${document.preview_url}#toolbar=1&navpanes=1&scrollbar=1&view=FitH`} title={document.title || 'PDF preview'} />
       ) : previewText(document) ? (
         <article className="al-text-doc">
-          <span className="al-doc-kind">{String(document.file_type || 'DOC').toUpperCase()} preview từ nội dung đã trích xuất</span>
+          <span className="al-doc-kind">{pdf ? 'PDF text mode · selection/citation giống DOCX/MD' : `${String(document.file_type || 'DOC').toUpperCase()} preview từ nội dung đã trích xuất`}</span>
+          {pdf && document.preview_url && <a className="al-original-pdf-link" href={document.preview_url} target="_blank" rel="noreferrer">Mở bản PDF gốc trong tab mới</a>}
           <h1>{document.title || document.filename}</h1>
+          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section}</span><p>{activeCitation.snippet}</p></aside>}
           <pre>{previewText(document)}</pre>
         </article>
+      ) : pdf && document.preview_url ? (
+        <>
+          <div className="al-viewer-warning"><AlertTriangle size={14} /> PDF này chưa có text trích xuất nên đang dùng iframe fallback. Upload lại hoặc kiểm tra parser để bật PDF text mode cho selection/citation giống DOCX/MD.</div>
+          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section}</span><p>{activeCitation.snippet}</p></aside>}
+          <iframe className="al-pdf-frame app-scrollbar" src={`${document.preview_url}#toolbar=1&navpanes=1&scrollbar=1&view=FitH`} title={document.title || 'PDF preview'} />
+        </>
       ) : (
         <div className="al-empty warning">
           <AlertTriangle size={38} />
@@ -67,6 +84,7 @@ export default function AcademicDocumentViewer({ document, snipping, onStopSnipp
           <p>Bạn vẫn có thể dùng AI để phân tích nội dung đã trích xuất nếu backend đã đọc được tài liệu.</p>
         </div>
       )}
+      {document?.is_temporary && <div className="al-temp-warning"><AlertTriangle size={14} /> {document.persistence_warning || 'Tài liệu tạm thời, có thể mất khi kết thúc phiên hoặc server restart.'}</div>}
       <SelectionActionPopover selection={selection} onAction={(action) => { onSelectionAction(selection.text, action); setSelection(null); }} />
       <SnippingOverlay active={snipping} targetRef={viewerRef} onCancel={onStopSnipping} onCapture={(payload) => { onSnip(payload); onStopSnipping(); }} />
     </section>

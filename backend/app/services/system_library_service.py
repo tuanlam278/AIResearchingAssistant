@@ -23,8 +23,68 @@ from app.services.llm import generate_system_document_metadata
 
 logger = logging.getLogger(__name__)
 
-DOCUMENT_STATUSES = {"PUBLISHED", "PENDING_REVIEW", "HIDDEN", "REJECTED", "DELETED"}
+DOCUMENT_STATUSES = {"PUBLISHED", "PENDING_REVIEW", "HIDDEN", "REJECTED", "DELETED", "NEEDS_CHANGES", "PROCESSING"}
 USER_UPLOAD_DEFAULT_STATUS = "PENDING_REVIEW"
+
+
+SOURCE_TYPE_LABELS = {
+    "system": "Hệ thống",
+    "community": "Cộng đồng",
+    "internet": "Internet / OpenAlex",
+}
+LEGACY_TO_SOURCE_TYPE = {
+    "SYSTEM_UPLOAD": "system",
+    "SYSTEM": "system",
+    "USER_UPLOAD": "community",
+    "COMMUNITY": "community",
+    "INTERNET": "internet",
+}
+SOURCE_TYPE_TO_DB = {
+    "system": "SYSTEM_UPLOAD",
+    "community": "USER_UPLOAD",
+    "internet": "INTERNET",
+}
+REVIEW_STATUS_TO_DB = {
+    "pending_review": "PENDING_REVIEW",
+    "published": "PUBLISHED",
+    "rejected": "REJECTED",
+    "needs_changes": "NEEDS_CHANGES",
+    "hidden": "HIDDEN",
+    "processing": "PROCESSING",
+}
+
+def _to_public_source_type(value: str | None) -> str:
+    raw = str(value or "SYSTEM_UPLOAD").strip()
+    return LEGACY_TO_SOURCE_TYPE.get(raw.upper(), LEGACY_TO_SOURCE_TYPE.get(raw.lower(), raw.lower() if raw.lower() in SOURCE_TYPE_LABELS else "system"))
+
+def _source_label(source_type: str | None) -> str:
+    return SOURCE_TYPE_LABELS.get(_to_public_source_type(source_type), "Hệ thống")
+
+def _to_public_review_status(value: str | None) -> str:
+    raw = str(value or "PUBLISHED").upper()
+    return {v: k for k, v in REVIEW_STATUS_TO_DB.items()}.get(raw, raw.lower())
+
+def _source_filter_values(values: list[str]) -> list[str]:
+    mapped = []
+    for value in values or []:
+        key = str(value or "").strip()
+        if not key:
+            continue
+        db_value = SOURCE_TYPE_TO_DB.get(key.lower(), key.upper())
+        if db_value not in mapped:
+            mapped.append(db_value)
+    return mapped
+
+def _status_filter_values(values: list[str]) -> list[str]:
+    mapped = []
+    for value in values or []:
+        key = str(value or "").strip()
+        if not key:
+            continue
+        db_value = REVIEW_STATUS_TO_DB.get(key.lower(), key.upper())
+        if db_value not in mapped:
+            mapped.append(db_value)
+    return mapped
 
 
 def normalize_citation_threshold(value: Any, *, maximum: float | None = None) -> float:
@@ -43,7 +103,8 @@ SYSTEM_DOCUMENT_COLUMNS = (
     "id, title, filename, file_type, storage_path, download_url, file_size, mime_type, category, tags, "
     "summary, page_count, word_count, is_vector_ready, created_by, created_at, updated_at, "
     "source_type, status, peer_review_status, access_type, review_type, has_pdf, has_code, has_data, "
-    "citation_count, vote_avg, vote_count, download_count, uploader_name, doi, external_url"
+    "citation_count, vote_avg, vote_count, download_count, uploader_name, doi, external_url, "
+    "status_reason, admin_feedback, processing_status, copyright_confirmed, authors, year, venue, open_access_pdf_url, metadata_only"
 )
 
 
@@ -105,11 +166,17 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
 
     category = row.get("category") or row.get("subject_area") or "Khác"
     summary = row.get("summary") or row.get("ai_summary") or row.get("description") or ""
-    source_type = str(row.get("source_type") or "SYSTEM_UPLOAD").upper()
+    db_source_type = str(row.get("source_type") or "SYSTEM_UPLOAD").upper()
+    source_type = _to_public_source_type(db_source_type)
     has_pdf = bool(_first_present(row, ["has_pdf"], False) or str(row.get("file_type") or "").upper() == "PDF" or str(row.get("mime_type") or "").lower() == "application/pdf")
-    can_download = bool(row.get("storage_path") or (row.get("download_url") and row.get("access_type") in {"OPEN_ACCESS", "FREE_TO_READ", "open_access", "free_to_read"}))
+    downloadable = bool(row.get("storage_path") or (row.get("download_url") and str(row.get("access_type") or "").upper() in {"OPEN_ACCESS", "FREE_TO_READ"}))
+    is_vector_ready = bool(row.get("is_vector_ready", False))
+    metadata_only = bool(row.get("metadata_only", False) or (source_type == "internet" and not is_vector_ready))
+    full_text_indexed = bool(is_vector_ready and not metadata_only)
     vote_avg = float(row.get("vote_avg") or row.get("average_rating") or 0)
     vote_count = int(row.get("vote_count") or row.get("rating_count") or 0)
+    review_status = _to_public_review_status(row.get("status"))
+    processing_status = row.get("processing_status") or ("published" if review_status == "published" else review_status)
 
     return {
         "id": str(row.get("id")),
@@ -120,7 +187,8 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
         "download_url": row.get("download_url"),
         "file_size": row.get("file_size"),
         "mime_type": row.get("mime_type"),
-        "can_download": can_download,
+        "can_download": downloadable,
+        "downloadable": downloadable,
         "description": row.get("description") or summary,
         "category": category,
         "subject_area": category,
@@ -130,13 +198,21 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
         "page_count": row.get("page_count"),
         "word_count": row.get("word_count"),
         "is_new": bool(row.get("is_new", is_new)),
-        "is_vector_ready": bool(row.get("is_vector_ready", False)),
+        "is_vector_ready": is_vector_ready,
+        "full_text_indexed": full_text_indexed,
+        "metadata_only": metadata_only,
         "updated_at": row.get("updated_at"),
         "created_at": row.get("created_at"),
         "created_by": row.get("created_by"),
         "uploader_name": _display_uploader(row),
         "source_type": source_type,
+        "source_label": _source_label(source_type),
+        "legacy_source_type": db_source_type,
+        "review_status": review_status,
         "status": str(row.get("status") or "PUBLISHED").upper(),
+        "status_reason": row.get("status_reason"),
+        "admin_feedback": row.get("admin_feedback"),
+        "processing_status": processing_status,
         "peer_review_status": str(row.get("peer_review_status") or "UNKNOWN").upper(),
         "access_type": str(row.get("access_type") or "UNKNOWN").upper(),
         "review_type": str(row.get("review_type") or "UNKNOWN").upper(),
@@ -151,9 +227,16 @@ def normalize_document(row: dict, bookmarked_ids: set[str] | None = None) -> dic
         "my_rating": row.get("my_rating"),
         "download_count": int(row.get("download_count") or 0),
         "doi": row.get("doi"),
+        "authors": row.get("authors") or [],
+        "year": row.get("year"),
+        "venue": row.get("venue"),
         "external_url": row.get("external_url") or row.get("url"),
+        "open_access_pdf_url": row.get("open_access_pdf_url") or row.get("download_url"),
         "bookmarked_by_current_user": str(row.get("id")) in bookmarked_ids or bool(row.get("bookmarked_by_current_user", False)),
         "is_bookmarked": str(row.get("id")) in bookmarked_ids or bool(row.get("bookmarked_by_current_user", False)),
+        "bookmark": {"is_bookmarked": str(row.get("id")) in bookmarked_ids or bool(row.get("bookmarked_by_current_user", False))},
+        "rating": {"average": vote_avg, "count": vote_count, "my_rating": row.get("my_rating")},
+        "access_badge": "full_text_indexed" if full_text_indexed else ("metadata_only" if metadata_only else ("open_access_pdf" if row.get("download_url") else "external_link_only")),
         "semantic_score": row.get("similarity") or row.get("score"),
     }
 
@@ -565,6 +648,8 @@ async def import_system_document_from_upload(
     source_type: str = "SYSTEM_UPLOAD",
     document_status: str = "PUBLISHED",
     uploader_name: str = "Hệ thống",
+    copyright_confirmed: bool | None = None,
+    processing_status: str | None = None,
 ) -> dict:
     """Parse, chunk, embed, auto-catalog, and persist an admin-uploaded System Library document."""
     max_size_bytes = settings.MAX_UPLOAD_MB * 1024 * 1024
@@ -619,14 +704,18 @@ async def import_system_document_from_upload(
         "vote_avg": 0,
         "vote_count": 0,
         "is_vector_ready": False,
+        "full_text_indexed": False,
+        "metadata_only": False,
+        "copyright_confirmed": copyright_confirmed,
+        "processing_status": processing_status or "embedding",
     }
 
     try:
         resp = supabase.table("system_documents").insert(document_payload).execute()
     except Exception:
         # Backward-compatible fallback until optional metadata columns are applied.
-        document_payload.pop("citation_threshold", None)
-        document_payload.pop("description", None)
+        for optional_key in ("citation_threshold", "description", "full_text_indexed", "metadata_only", "copyright_confirmed", "processing_status"):
+            document_payload.pop(optional_key, None)
         try:
             resp = supabase.table("system_documents").insert(document_payload).execute()
         except Exception as exc:
@@ -676,7 +765,11 @@ async def import_system_document_from_upload(
             for index in range(len(chunks))
         ]
         supabase.table("system_document_chunks").insert(chunk_rows).execute()
-        update_resp = supabase.table("system_documents").update({"is_vector_ready": True}).eq("id", document_id).execute()
+        final_processing_status = "published" if _normalize_document_status(document_status) == "PUBLISHED" else "pending_review"
+        try:
+            update_resp = supabase.table("system_documents").update({"is_vector_ready": True, "processing_status": final_processing_status}).eq("id", document_id).execute()
+        except Exception:
+            update_resp = supabase.table("system_documents").update({"is_vector_ready": True}).eq("id", document_id).execute()
         updated_rows, update_error = _supabase_response_data(update_resp)
         if update_error:
             raise RuntimeError(update_error)
@@ -715,8 +808,9 @@ def _apply_filters(query: Any, filters: dict) -> Any:
     peer_review_status = filters.get("peer_review_status") or []
     access_types = filters.get("access_types") or filters.get("access_type") or []
     review_types = filters.get("review_types") or filters.get("review_type") or []
-    source_types = filters.get("source_types") or []
-    statuses = filters.get("statuses") or ["PUBLISHED"]
+    source_types = _source_filter_values(filters.get("source_types") or [])
+    statuses = _status_filter_values(filters.get("review_statuses") or filters.get("statuses") or ["published"])
+    categories = filters.get("categories") or []
 
     if statuses:
         query = query.in_("status", statuses)
@@ -734,6 +828,19 @@ def _apply_filters(query: Any, filters: dict) -> Any:
         query = query.eq("has_data", True)
     if filters.get("has_code"):
         query = query.eq("has_code", True)
+    if categories:
+        query = query.in_("category", categories)
+    if filters.get("is_vector_ready") is not None and filters.get("is_vector_ready") != "":
+        query = query.eq("is_vector_ready", bool(filters.get("is_vector_ready")))
+    if filters.get("downloadable") is True:
+        # File-backed uploads always have storage_path; OpenAlex OA PDFs have download_url.
+        query = query.or_("storage_path.not.is.null,download_url.not.is.null")
+    if filters.get("year_from") not in (None, ""):
+        query = query.gte("year", int(filters.get("year_from")))
+    if filters.get("year_to") not in (None, ""):
+        query = query.lte("year", int(filters.get("year_to")))
+    if filters.get("has_doi") is True:
+        query = query.not_.is_("doi", "null")
     citation_min = filters.get("citation_count_min")
     if citation_min not in (None, ""):
         try:
@@ -812,47 +919,66 @@ def _metadata_matches(row: dict, terms: list[str]) -> bool:
 async def list_or_search_documents(user: dict, query_text: str = "", filters: dict | None = None) -> dict:
     user_id = _get_user_id(user)
     filters = filters or {}
+    page = max(1, int(filters.get("page") or 1))
+    page_size = min(100, max(1, int(filters.get("page_size") or 20)))
+    offset = (page - 1) * page_size
     my_documents = bool(filters.get("my_documents"))
-    if my_documents:
+    if my_documents and not (filters.get("review_statuses") or filters.get("statuses")):
         filters = {**filters, "statuses": sorted(DOCUMENT_STATUSES)}
     bookmarked_ids = _query_bookmarked_ids(user_id)
     bookmarked_only = bool(filters.get("bookmarked"))
 
     try:
-        query = supabase.table("system_documents").select(SYSTEM_DOCUMENT_COLUMNS)
+        query = supabase.table("system_documents").select(SYSTEM_DOCUMENT_COLUMNS, count="exact")
         query = _apply_filters(query, filters)
         if my_documents:
             query = query.eq("created_by", user_id)
         if bookmarked_only:
             if not bookmarked_ids:
-                return {"documents": [], "total": 0}
+                return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
             query = query.in_("id", list(bookmarked_ids))
-        query = _apply_sort(query, filters.get("sort"), bool(str(query_text or "").strip())).limit(100)
+        if str(query_text or "").strip():
+            term = str(query_text).strip().replace("%", "")
+            query = query.or_(f"title.ilike.%{term}%,filename.ilike.%{term}%,summary.ilike.%{term}%,category.ilike.%{term}%")
+        query = _apply_sort(query, filters.get("sort"), bool(str(query_text or "").strip()))
+        query = query.range(offset, offset + page_size - 1)
         resp = query.execute()
     except Exception as exc:
         if _is_missing_table_error(exc):
-            return {"documents": [], "total": 0}
+            return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
         logger.exception("List system documents failed")
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"}) from exc
 
     rows, error = _supabase_response_data(resp)
     if error:
         if _is_missing_table_error(error):
-            return {"documents": [], "total": 0}
+            return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"})
 
     rows = rows or []
+    semantic_fallback = False
     if str(query_text or "").strip():
+        # NOTE: legacy RPC ranks candidate rows returned by metadata filters. Keep fallback explicit
+        # until the DB RPC supports full-library vector search with all facets.
         semantic_rows = await _semantic_ranked_rows(str(query_text), rows)
         if semantic_rows is not None:
             rows = semantic_rows
         else:
+            semantic_fallback = True
             terms = [term.lower() for term in str(query_text or "").split() if term.strip()]
             rows = [row for row in rows if _metadata_matches(row, terms)]
 
     documents = [normalize_document(row, bookmarked_ids) for row in rows]
-    return {"documents": documents, "total": len(documents)}
-
+    total_count = int(getattr(resp, "count", None) or len(documents))
+    return {
+        "documents": documents,
+        "page": page,
+        "page_size": page_size,
+        "total_count": total_count,
+        "total": total_count,
+        "has_more": offset + len(documents) < total_count,
+        "semantic_fallback": semantic_fallback,
+    }
 
 def list_admin_documents() -> dict:
     try:
@@ -937,8 +1063,11 @@ async def import_community_document_from_upload(
     tags: str | list[str] | None = None,
     mime_type: str | None = None,
     citation_threshold: float | int | str | None = 0,
+    copyright_confirmed: bool = False,
 ) -> dict:
     require_library_publish_allowed(user)
+    if not copyright_confirmed:
+        raise HTTPException(status_code=400, detail={"code": "COPYRIGHT_CONFIRMATION_REQUIRED", "message": "Bạn cần xác nhận quyền chia sẻ và bản quyền trước khi upload."})
     user_id = _get_user_id(user)
     profile = _profile_for_user_id(user_id)
     uploader_name = profile.get("display_name") or profile.get("full_name") or user.get("name") or user.get("email") or "Người dùng"
@@ -956,9 +1085,11 @@ async def import_community_document_from_upload(
         source_type="USER_UPLOAD",
         document_status=default_status,
         uploader_name=uploader_name,
+        copyright_confirmed=True,
+        processing_status="uploaded",
     )
     try:
-        payload = {"source_type": "USER_UPLOAD", "uploader_name": uploader_name, "status": default_status}
+        payload = {"source_type": "USER_UPLOAD", "uploader_name": uploader_name, "status": default_status, "copyright_confirmed": True, "processing_status": "pending_review" if default_status == "PENDING_REVIEW" else "published"}
         resp = supabase.table("system_documents").update(payload).eq("id", document["id"]).execute()
         rows, error = _supabase_response_data(resp)
         if not error and rows:
@@ -1000,6 +1131,25 @@ async def import_internet_paper_to_library(paper: dict, user: dict) -> dict:
     has_pdf = bool(paper.get("has_pdf") or paper.get("hasPdf") or paper.get("pdf_url") or paper.get("pdfUrl"))
     is_open_access = bool(paper.get("is_open_access") or paper.get("isOpenAccess"))
     pdf_url = paper.get("pdf_url") or paper.get("pdfUrl")
+    external_url = paper.get("landing_page_url") or paper.get("openalex_url") or paper.get("url")
+    doi = paper.get("doi")
+    try:
+        dup_query = supabase.table("system_documents").select(SYSTEM_DOCUMENT_COLUMNS).eq("source_type", "INTERNET")
+        if doi:
+            dup_query = dup_query.eq("doi", doi)
+        elif external_url:
+            dup_query = dup_query.eq("external_url", external_url)
+        else:
+            dup_query = None
+        if dup_query is not None:
+            dup_resp = dup_query.limit(1).execute()
+            dup_rows, dup_error = _supabase_response_data(dup_resp)
+            if not dup_error and dup_rows:
+                duplicate = normalize_document(dup_rows[0])
+                duplicate["duplicate"] = True
+                return duplicate
+    except Exception:
+        logger.info("OpenAlex duplicate check skipped", exc_info=True)
     payload = {
         "title": paper.get("title") or "Internet paper",
         "filename": paper.get("title") or paper.get("externalId") or paper.get("id") or "internet-paper",
@@ -1020,8 +1170,14 @@ async def import_internet_paper_to_library(paper: dict, user: dict) -> dict:
         "has_code": bool(paper.get("has_code") or paper.get("hasCode")),
         "has_data": bool(paper.get("has_data") or paper.get("hasData")),
         "citation_count": int(paper.get("citation_count") or paper.get("citationCount") or 0),
-        "doi": paper.get("doi"),
-        "external_url": paper.get("landing_page_url") or paper.get("openalex_url") or paper.get("url"),
+        "doi": doi,
+        "authors": paper.get("authors") or [],
+        "year": paper.get("year"),
+        "venue": paper.get("venue") or paper.get("source"),
+        "external_url": external_url,
+        "open_access_pdf_url": pdf_url,
+        "metadata_only": True,
+        "processing_status": "metadata_only",
         "download_count": 0,
         "vote_avg": 0,
         "vote_count": 0,
@@ -1031,8 +1187,84 @@ async def import_internet_paper_to_library(paper: dict, user: dict) -> dict:
         resp = supabase.table("system_documents").insert(payload).execute()
         rows, error = _supabase_response_data(resp)
     except Exception as exc:
-        logger.exception("Import internet paper failed")
-        raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể import paper vào thư viện."}) from exc
+        for optional_key in ("authors", "year", "venue", "open_access_pdf_url", "metadata_only", "processing_status"):
+            payload.pop(optional_key, None)
+        try:
+            resp = supabase.table("system_documents").insert(payload).execute()
+            rows, error = _supabase_response_data(resp)
+        except Exception as retry_exc:
+            logger.exception("Import internet paper failed")
+            raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể import paper vào thư viện."}) from retry_exc
     if error or not rows:
         raise HTTPException(status_code=500, detail={"code": "DB_INSERT_FAILED", "message": "Không thể import paper vào thư viện."})
     return normalize_document(rows[0])
+
+def _get_owned_document_row(document_id: str, user: dict) -> dict:
+    user_id = _get_user_id(user)
+    try:
+        resp = supabase.table("system_documents").select(SYSTEM_DOCUMENT_COLUMNS).eq("id", document_id).single().execute()
+        row, error = _supabase_response_data(resp)
+    except Exception as exc:
+        logger.exception("Lookup owned library document failed")
+        raise HTTPException(status_code=500, detail={"code": "DOC_LOOKUP_FAILED", "message": "Không thể tải tài liệu."}) from exc
+    if error or not row:
+        raise HTTPException(status_code=404, detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu."})
+    if str(user.get("role") or "user").lower() != "admin" and str(row.get("created_by")) != user_id:
+        raise HTTPException(status_code=403, detail={"code": "DOCUMENT_FORBIDDEN", "message": "Bạn chỉ được quản lý tài liệu của chính mình."})
+    return row
+
+
+def update_my_library_document(document_id: str, user: dict, payload: dict) -> dict:
+    row = _get_owned_document_row(document_id, user)
+    status_value = str(row.get("status") or "PUBLISHED").upper()
+    editable_statuses = {"PENDING_REVIEW", "REJECTED", "NEEDS_CHANGES", "PROCESSING"}
+    if status_value not in editable_statuses and str(user.get("role") or "user").lower() != "admin":
+        raise HTTPException(status_code=400, detail={"code": "DOCUMENT_NOT_EDITABLE", "message": "Tài liệu đã public chỉ có thể chỉnh sửa sau khi gửi yêu cầu duyệt lại."})
+    update_payload = {}
+    for key in ("title", "description", "category"):
+        if key in payload:
+            update_payload[key] = (payload.get(key) or "").strip() or None
+    if "tags" in payload:
+        update_payload["tags"] = _parse_tags(payload.get("tags"))
+    if update_payload:
+        update_payload["status"] = "PENDING_REVIEW" if status_value in {"REJECTED", "NEEDS_CHANGES"} else status_value
+        update_payload["status_reason"] = None
+        update_payload["admin_feedback"] = None
+        update_payload["processing_status"] = "pending_review"
+    try:
+        resp = supabase.table("system_documents").update(update_payload).eq("id", document_id).execute()
+        rows, error = _supabase_response_data(resp)
+    except Exception as exc:
+        logger.exception("Update owned library document failed")
+        raise HTTPException(status_code=500, detail={"code": "DOC_UPDATE_FAILED", "message": "Không thể cập nhật tài liệu."}) from exc
+    if error or not rows:
+        raise HTTPException(status_code=500, detail={"code": "DOC_UPDATE_FAILED", "message": "Không thể cập nhật tài liệu."})
+    return {"document": normalize_document(rows[0])}
+
+
+def delete_my_library_document(document_id: str, user: dict) -> dict:
+    _get_owned_document_row(document_id, user)
+    try:
+        resp = supabase.table("system_documents").update({"status": "DELETED", "processing_status": "deleted"}).eq("id", document_id).execute()
+        rows, error = _supabase_response_data(resp)
+    except Exception as exc:
+        logger.exception("Delete owned library document failed")
+        raise HTTPException(status_code=500, detail={"code": "DOC_DELETE_FAILED", "message": "Không thể xoá tài liệu."}) from exc
+    if error or not rows:
+        raise HTTPException(status_code=500, detail={"code": "DOC_DELETE_FAILED", "message": "Không thể xoá tài liệu."})
+    return {"document_id": document_id, "deleted": True}
+
+
+def resubmit_my_library_document(document_id: str, user: dict) -> dict:
+    row = _get_owned_document_row(document_id, user)
+    if str(row.get("status") or "").upper() not in {"REJECTED", "NEEDS_CHANGES", "HIDDEN"}:
+        raise HTTPException(status_code=400, detail={"code": "RESUBMIT_NOT_ALLOWED", "message": "Chỉ tài liệu bị từ chối/cần chỉnh sửa mới gửi duyệt lại."})
+    try:
+        resp = supabase.table("system_documents").update({"status": "PENDING_REVIEW", "status_reason": None, "admin_feedback": None, "processing_status": "pending_review"}).eq("id", document_id).execute()
+        rows, error = _supabase_response_data(resp)
+    except Exception as exc:
+        logger.exception("Resubmit owned library document failed")
+        raise HTTPException(status_code=500, detail={"code": "DOC_RESUBMIT_FAILED", "message": "Không thể gửi duyệt lại."}) from exc
+    if error or not rows:
+        raise HTTPException(status_code=500, detail={"code": "DOC_RESUBMIT_FAILED", "message": "Không thể gửi duyệt lại."})
+    return {"document": normalize_document(rows[0])}

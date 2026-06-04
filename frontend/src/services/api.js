@@ -164,10 +164,12 @@ async function readSseStream(response, callbacks = {}) {
         const event = JSON.parse(dataLine.slice(6));
         if (event.type === "status") callbacks.onStatus?.(event.status, event.message);
         if (event.type === "sources") callbacks.onSources?.(event.sources || event.citations || [], event.citations || event.sources || []);
+        if (event.type === "retrieval_diagnostics") callbacks.onDiagnostics?.(event.retrieval_diagnostics || event.diagnostics || null);
         if (event.type === "warning") callbacks.onWarning?.(event.warning || event.message || "");
         if (event.type === "suggested_prompts") callbacks.onSuggestedPrompts?.(event.suggested_prompts || []);
         if (event.type === "token") callbacks.onToken?.(event.content || "");
         if (event.type === "done") {
+          if (event.retrieval_diagnostics || event.diagnostics) callbacks.onDiagnostics?.(event.retrieval_diagnostics || event.diagnostics);
           if (event.warning) callbacks.onWarning?.(event.warning);
           if (event.suggested_prompts) callbacks.onSuggestedPrompts?.(event.suggested_prompts || []);
           callbacks.onDone?.(event);
@@ -419,6 +421,7 @@ export const api = {
 
 
   // ── SYSTEM LIBRARY ───────────────────────────────────────────────────────
+  // Legacy API name; UI treats this as unified System / Community / Internet library.
   listSystemLibraryDocuments: (params, token) =>
     unwrapRequest(() =>
       axiosInstance.get("/api/system-library/documents", { params, headers: authHeader(token) })
@@ -445,6 +448,7 @@ export const api = {
     formData.append("category", payload.category || "");
     formData.append("tags", payload.tags || "");
     formData.append("citation_threshold", Number.isFinite(Number(payload.citationThreshold)) ? Number(payload.citationThreshold) : 0);
+    formData.append("copyright_confirmed", payload.copyrightConfirmed ? "true" : "false");
     return unwrapRequest(() =>
       axiosInstance.post("/api/system-library/documents/upload", formData, {
         headers: { ...authHeader(token) },
@@ -480,6 +484,15 @@ export const api = {
 
   importInternetPaperToLibrary: (paper, token) =>
     unwrapRequest(() => axiosInstance.post("/api/system-library/papers/import", { paper }, { headers: authHeader(token) })),
+
+  updateMyLibraryDocument: (documentId, payload, token) =>
+    unwrapRequest(() => axiosInstance.patch(`/api/system-library/my-documents/${documentId}`, payload, { headers: authHeader(token) })),
+
+  deleteMyLibraryDocument: (documentId, token) =>
+    unwrapRequest(() => axiosInstance.delete(`/api/system-library/my-documents/${documentId}`, { headers: authHeader(token) })),
+
+  resubmitMyLibraryDocument: (documentId, token) =>
+    unwrapRequest(() => axiosInstance.post(`/api/system-library/my-documents/${documentId}/resubmit`, {}, { headers: authHeader(token) })),
 
   updateUserLibraryUploadPermission: (userId, payload, token) =>
     unwrapRequest(() => axiosInstance.patch(`/api/admin/users/${userId}/library-upload`, payload, { headers: authHeader(token) })),
@@ -654,14 +667,59 @@ export const api = {
     );
   },
 
+  getAcademicLensWebContexts: (params = {}, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/academic-lens/web-contexts", { params, headers: authHeader(token) })
+    ),
+
   addAcademicLensWebContext: (payload, token) =>
     unwrapRequest(() =>
-      axiosInstance.post("/api/academic-lens/add-web-context", payload, { headers: authHeader(token) })
+      axiosInstance.post("/api/academic-lens/web-contexts", payload, { headers: authHeader(token) })
+    ),
+
+  updateAcademicLensWebContext: (contextId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.patch(`/api/academic-lens/web-contexts/${contextId}`, payload, { headers: authHeader(token) })
+    ),
+
+  deleteAcademicLensWebContext: (contextId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/academic-lens/web-contexts/${contextId}`, { headers: authHeader(token) })
+    ),
+
+  getAcademicLensNotepad: (params = {}, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/academic-lens/notes", { params, headers: authHeader(token) })
     ),
 
   saveAcademicLensNotepad: (payload, token) =>
     unwrapRequest(() =>
-      axiosInstance.put("/api/academic-lens/notepad", payload, { headers: authHeader(token) })
+      axiosInstance.put("/api/academic-lens/notes", payload, { headers: authHeader(token) })
+    ),
+
+  createAcademicLensSession: (payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post("/api/academic-lens/sessions", payload, { headers: authHeader(token) })
+    ),
+
+  listAcademicLensSessions: (params = {}, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get("/api/academic-lens/sessions", { params, headers: authHeader(token) })
+    ),
+
+  getAcademicLensSession: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.get(`/api/academic-lens/sessions/${sessionId}`, { headers: authHeader(token) })
+    ),
+
+  addAcademicLensSessionMessage: (sessionId, payload, token) =>
+    unwrapRequest(() =>
+      axiosInstance.post(`/api/academic-lens/sessions/${sessionId}/messages`, payload, { headers: authHeader(token) })
+    ),
+
+  clearAcademicLensSessionMessages: (sessionId, token) =>
+    unwrapRequest(() =>
+      axiosInstance.delete(`/api/academic-lens/sessions/${sessionId}/messages`, { headers: authHeader(token) })
     ),
 
   clearCrossAnalysisChat: (payload, token) =>

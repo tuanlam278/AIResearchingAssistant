@@ -211,6 +211,7 @@ def _load_system_document(document_id: str) -> dict[str, Any]:
             "page_start": chunk.get("page_start"),
             "page_end": chunk.get("page_end"),
             "section": "System Library",
+            "embedding": chunk.get("embedding"),
         }
         for chunk in (chunk_rows or [])
         if chunk.get("content")

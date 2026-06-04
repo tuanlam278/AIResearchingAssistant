@@ -2,7 +2,7 @@ import { ExternalLink, FileText } from 'lucide-react';
 
 const compact = (value) => new Intl.NumberFormat('vi-VN', { notation: Number(value) >= 1000 ? 'compact' : 'standard' }).format(Number(value) || 0);
 
-export default function OpenAlexPaperCard({ paper, onOpenDetails, onImport }) {
+export default function OpenAlexPaperCard({ paper, onOpenDetails, onImport, importing }) {
   const title = paper.title || 'Paper chưa có tiêu đề';
   const authors = (paper.authors || []).slice(0, 3).join(', ') || 'Không rõ tác giả';
   const summary = paper.summary || paper.abstract || 'Chưa có mô tả.';
@@ -18,7 +18,7 @@ export default function OpenAlexPaperCard({ paper, onOpenDetails, onImport }) {
         <div className="sl-card__badges">
           <span className="sl-badge">{paper.year || 'Không rõ năm'}</span>
           {paper.venue && <span className="sl-badge">{paper.venue}</span>}
-          {paper.pdf_url && <span className="sl-badge">Có PDF</span>}
+          {paper.pdf_url ? <span className="sl-badge">Open access PDF</span> : <span className="sl-badge is-warning">Metadata only nếu import</span>}
         </div>
         <h3>{title}</h3>
         <p>{summary}</p>
@@ -31,7 +31,7 @@ export default function OpenAlexPaperCard({ paper, onOpenDetails, onImport }) {
       <div className="sl-card__footer">
         {url && <a className="sl-more-link" href={url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Mở nguồn</a>}
         <button type="button" className="sl-more-link" onClick={() => onOpenDetails(paper)}>Xem thêm</button>
-        <button type="button" className="sl-upload-btn" onClick={() => onImport(paper)}>Import vào thư viện</button>
+        <button type="button" className="sl-upload-btn" onClick={() => onImport(paper)} disabled={importing}>{importing ? "Đang import..." : "Import vào thư viện"}</button>
       </div>
     </article>
   );

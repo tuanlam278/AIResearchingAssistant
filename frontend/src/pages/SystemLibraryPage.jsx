@@ -24,6 +24,13 @@ const emptyFilters = {
   access_types: [],
   review_types: [],
   source_types: [],
+  categories: [],
+  review_statuses: [],
+  is_vector_ready: null,
+  downloadable: null,
+  year_from: "",
+  year_to: "",
+  has_doi: null,
   has_pdf: false,
   has_data: false,
   has_code: false,
@@ -86,13 +93,13 @@ const STYLES = `
   .sl-card__flags .is-on { opacity: 1; color: #f0d089; }
   .sl-modal-overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 18px; background: rgba(0,0,0,.62); }
   .sl-tag-modal-overlay { z-index: 90; }
-  .sl-modal { width: min(760px, 100%); max-height: min(86vh, 820px); display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: #18140f; color: #efe6d8; box-shadow: 0 30px 110px rgba(0,0,0,.55); position: relative; }
+  .sl-modal { width: min(760px, 100%); height: min(86vh, 820px); max-height: min(86vh, 820px); display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.12); border-radius: 26px; background: #18140f; color: #efe6d8; box-shadow: 0 30px 110px rgba(0,0,0,.55); position: relative; }
   .sl-modal__close { position: absolute; top: 14px; right: 14px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: #efe6d8; border-radius: 999px; width: 36px; height: 36px; cursor: pointer; display: flex; justify-content: center; align-items: center;}
   .sl-modal__header { display: flex; gap: 14px; padding: 24px 26px 12px; }
   .sl-modal__header p { margin: 0 0 4px; color: #d4b66f; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
   .sl-modal__header h2 { margin: 0; font-size: clamp(22px, 4vw, 34px); }
   .sl-modal__icon { flex: 0 0 46px; width: 46px; height: 46px; display: grid; place-items: center; border-radius: 16px; background: rgba(212,182,111,.14); color: #f0d089; }
-  .sl-modal__content { overflow: auto; padding: 8px 26px 18px; display: grid; gap: 16px; }
+  .sl-modal__content { flex: 1; min-height: 0; overflow: auto; padding: 8px 26px 18px; display: grid; align-content: start; gap: 16px; }
   .sl-tag-modal { width: min(720px, 100%); }
   .sl-tag-modal__search { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid rgba(255,255,255,.09); border-radius: 16px; color: #d4b66f; background: rgba(0,0,0,.18); }
   .sl-tag-modal__search input { border: 0; background: transparent; padding: 0; }
@@ -162,6 +169,25 @@ const STYLES = `
   .sl-paper-list { display: grid; gap: 12px; margin-top: 18px; }
   .sl-paper-item { border: 1px solid rgba(255,255,255,.08); border-radius: 18px; padding: 14px; background: rgba(0,0,0,.18); color: #efe6d8; }
   .sl-paper-item p { margin: 6px 0; }
+
+  .sl-card__paper-meta, .sl-card__feedback, .sl-warning-text { color:#f2d48b; font-size:12px; line-height:1.5; }
+  .sl-badge--source { background:rgba(96,165,250,.14); color:#bfdbfe; }
+  .sl-badge--status { background:rgba(212,182,111,.14); color:#f2d48b; }
+  .sl-badge.is-warning, .sl-badge--access.is-warning { background:rgba(251,191,36,.14); color:#fde68a; }
+  .sl-card__owner-actions, .sl-pagination, .sl-modal__tabs { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:12px; }
+  .sl-card__owner-actions { border-top:1px solid rgba(255,255,255,.08); padding-top:12px; }
+  .sl-card__owner-actions button, .sl-modal__tabs button { border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:9px 12px; background:rgba(255,255,255,.045); color:#efe6d8; cursor:pointer; }
+  .sl-card__owner-actions button:disabled { opacity:.45; cursor:not-allowed; }
+  .sl-modal__tabs { padding:0 26px 12px; border-bottom:1px solid rgba(255,255,255,.08); }
+  .sl-modal__tabs button.is-active { background:#d4b66f; color:#18130d; font-weight:800; }
+  .sl-my-dashboard { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-top:18px; }
+  .sl-my-stat { border:1px solid rgba(255,255,255,.08); border-radius:18px; padding:14px; background:rgba(255,255,255,.04); display:grid; gap:4px; color:#bfb4a3; }
+  .sl-my-stat strong { color:#f0d089; font-size:24px; }
+  .sl-pagination-summary { color:#bfb4a3; margin:0 0 12px; font-size:13px; }
+  .sl-checkbox-row { display:flex; align-items:flex-start; gap:10px; border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px; background:rgba(0,0,0,.18); }
+  .sl-checkbox-row input { width:auto !important; margin-top:3px; }
+  .sl-filters input { width:100%; border:1px solid rgba(255,255,255,.09); outline:none; background:rgba(0,0,0,.2); color:#eee6d8; font-size:13px; border-radius:12px; padding:9px 10px; }
+  @media (max-width: 900px) { .sl-my-dashboard { grid-template-columns:repeat(2,minmax(0,1fr)); } }
   @media (max-width: 900px) { .sl-body, .sl-upload-layout { grid-template-columns: 1fr; } .sl-filters { position: static; } }
   @media (max-width: 640px) { .sl-search, .sl-paper-search { grid-template-columns: auto 1fr; } .sl-search__button, .sl-paper-search button { grid-column: 1 / -1; width: 100%; } .sl-modal__grid, .sl-upload-grid { grid-template-columns: 1fr; } .sl-card__footer { align-items: stretch; flex-direction: column; } }
 `;
@@ -190,7 +216,15 @@ export default function SystemLibraryPage() {
   const [bookmarksOnly, setBookmarksOnly] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [hasMore, setHasMore] = useState(false);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [myDocumentsLoading, setMyDocumentsLoading] = useState(false);
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const [bookmarkingIds, setBookmarkingIds] = useState(() => new Set());
+  const [importingPaperIds, setImportingPaperIds] = useState(() => new Set());
+  const [myDocumentActionId, setMyDocumentActionId] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [selectedDocument, setSelectedDocument] = useState(null);
@@ -207,6 +241,7 @@ export default function SystemLibraryPage() {
   const [uploadCitationThreshold, setUploadCitationThreshold] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState("");
+  const [copyrightConfirmed, setCopyrightConfirmed] = useState(false);
   const [paperQuery, setPaperQuery] = useState("");
   const [paperResults, setPaperResults] = useState([]);
   const [paperLoading, setPaperLoading] = useState(false);
@@ -219,7 +254,8 @@ export default function SystemLibraryPage() {
 
   const fetchDocuments = useCallback(async () => {
     if (!token || activeTab === "internet") return;
-    setLoading(true);
+    if (activeTab === "my") setMyDocumentsLoading(true);
+    else setDocumentsLoading(true);
     setError("");
     try {
       const citationMin = Number(filters.citation_count_min);
@@ -228,6 +264,8 @@ export default function SystemLibraryPage() {
         tags: selectedTags,
         bookmarked: bookmarksOnly,
         my_documents: activeTab === "my",
+        page,
+        page_size: pageSize,
       };
       if (filters.citation_count_enabled)
         searchFilters.citation_count_min = Number.isFinite(citationMin)
@@ -240,15 +278,20 @@ export default function SystemLibraryPage() {
         token,
       );
       setDocuments(result?.documents || []);
-      setTotal(result?.total || 0);
+      setTotal(result?.total_count ?? result?.total ?? 0);
+      setHasMore(Boolean(result?.has_more));
+      if (result?.semantic_fallback) setNotice("Đang tìm theo metadata do tìm kiếm ngữ nghĩa chưa khả dụng.");
     } catch (err) {
       setDocuments([]);
       setTotal(0);
       setError(err.message || "Không thể tải Thư viện tài liệu.");
     } finally {
-      setLoading(false);
+      setDocumentsLoading(false);
+      setMyDocumentsLoading(false);
     }
-  }, [token, activeTab, debouncedQuery, filters, selectedTags, bookmarksOnly]);
+  }, [token, activeTab, debouncedQuery, filters, selectedTags, bookmarksOnly, page, pageSize]);
+
+  useEffect(() => { setPage(1); }, [activeTab, debouncedQuery, filters, selectedTags, bookmarksOnly]);
 
   useEffect(() => {
     fetchDocuments();
@@ -275,14 +318,17 @@ export default function SystemLibraryPage() {
     );
 
   const handleToggleBookmark = async (document) => {
-    const nextValue = !document.bookmarked_by_current_user;
-    patchDocument(document.id, { bookmarked_by_current_user: nextValue });
+    const nextValue = !(document.bookmarked_by_current_user || document.bookmark?.is_bookmarked);
+    setBookmarkingIds((current) => new Set([...current, document.id]));
+    patchDocument(document.id, { bookmarked_by_current_user: nextValue, bookmark: { is_bookmarked: nextValue } });
     try {
       if (nextValue) await api.bookmarkSystemDocument(document.id, token);
       else await api.unbookmarkSystemDocument(document.id, token);
     } catch (err) {
-      patchDocument(document.id, { bookmarked_by_current_user: !nextValue });
+      patchDocument(document.id, { bookmarked_by_current_user: !nextValue, bookmark: { is_bookmarked: !nextValue } });
       setNotice(err.message || "Không thể cập nhật danh sách đã ghim.");
+    } finally {
+      setBookmarkingIds((current) => { const next = new Set(current); next.delete(document.id); return next; });
     }
   };
 
@@ -410,7 +456,11 @@ export default function SystemLibraryPage() {
       setNotice("Vui lòng chọn file để upload.");
       return;
     }
-    setLoading(true);
+    if (!copyrightConfirmed) {
+      setNotice("Vui lòng xác nhận quyền chia sẻ và bản quyền trước khi upload.");
+      return;
+    }
+    setUploadLoading(true);
     setUploadProgress(0);
     setUploadStatus("Đang chuẩn bị tài liệu");
     setNotice("Đang upload và xử lý tài liệu...");
@@ -425,6 +475,7 @@ export default function SystemLibraryPage() {
           category: uploadCategory,
           tags: uploadTags,
           citationThreshold: uploadCitationThreshold || 0,
+          copyrightConfirmed,
         },
         token,
         (progress) => {
@@ -442,6 +493,7 @@ export default function SystemLibraryPage() {
       setUploadCategory("");
       setUploadTags("");
       setUploadCitationThreshold("");
+      setCopyrightConfirmed(false);
       setUploadProgress(100);
       setUploadStatus("Hoàn tất");
       setNotice(
@@ -454,7 +506,7 @@ export default function SystemLibraryPage() {
     } catch (err) {
       setNotice(err.message || "Không thể upload tài liệu.");
     } finally {
-      setLoading(false);
+      setUploadLoading(false);
     }
   };
 
@@ -485,15 +537,63 @@ export default function SystemLibraryPage() {
       );
       return;
     }
+    const paperId = paper.id || paper.externalId || paper.doi || paper.title;
+    setImportingPaperIds((current) => new Set([...current, paperId]));
     try {
-      await api.importInternetPaperToLibrary(paper, token);
-      setNotice("Đã import paper vào thư viện.");
+      const result = await api.importInternetPaperToLibrary(paper, token);
+      setNotice(result?.document?.duplicate ? "Paper đã tồn tại theo DOI/URL; không tạo bản trùng." : "Đã import paper vào thư viện.");
       setActiveTab("community");
       await fetchDocuments();
     } catch (err) {
       setNotice(err.message || "Không thể import paper vào thư viện.");
+    } finally {
+      setImportingPaperIds((current) => { const next = new Set(current); next.delete(paperId); return next; });
     }
   };
+
+
+  const handleMyDocumentEdit = async (document) => {
+    const nextTitle = window.prompt("Sửa title", document.title || "");
+    if (nextTitle === null) return;
+    setMyDocumentActionId(document.id);
+    try {
+      const result = await api.updateMyLibraryDocument(document.id, { title: nextTitle }, token);
+      patchDocument(document.id, result?.document || { title: nextTitle, review_status: "pending_review" });
+      setNotice("Đã cập nhật metadata và chuyển về trạng thái chờ duyệt nếu cần.");
+    } catch (err) {
+      setNotice(err.message || "Không thể cập nhật tài liệu.");
+    } finally {
+      setMyDocumentActionId(null);
+    }
+  };
+
+  const handleMyDocumentDelete = async (document) => {
+    if (!window.confirm(`Xóa tài liệu "${document.title || document.filename}"?`)) return;
+    setMyDocumentActionId(document.id);
+    try {
+      await api.deleteMyLibraryDocument(document.id, token);
+      setDocuments((current) => current.filter((item) => item.id !== document.id));
+      setNotice("Đã xóa tài liệu khỏi dashboard của bạn.");
+    } catch (err) {
+      setNotice(err.message || "Không thể xóa tài liệu.");
+    } finally {
+      setMyDocumentActionId(null);
+    }
+  };
+
+  const handleMyDocumentResubmit = async (document) => {
+    setMyDocumentActionId(document.id);
+    try {
+      const result = await api.resubmitMyLibraryDocument(document.id, token);
+      patchDocument(document.id, result?.document || { review_status: "pending_review", status: "PENDING_REVIEW" });
+      setNotice("Đã gửi tài liệu duyệt lại.");
+    } catch (err) {
+      setNotice(err.message || "Không thể gửi duyệt lại.");
+    } finally {
+      setMyDocumentActionId(null);
+    }
+  };
+
 
   return (
     <div className="sl-page">
@@ -540,7 +640,7 @@ export default function SystemLibraryPage() {
               event.preventDefault();
               setDebouncedQuery(query.trim());
             }}
-            loading={loading}
+            loading={activeTab === "my" ? myDocumentsLoading : documentsLoading}
           />
         )}
         {notice && (
@@ -591,6 +691,7 @@ export default function SystemLibraryPage() {
                   paper={paper}
                   onOpenDetails={setSelectedPaper}
                   onImport={handleImportPaper}
+                  importing={importingPaperIds.has(paper.id || paper.externalId || paper.doi || paper.title)}
                 />
               ))}
             </div>
@@ -683,11 +784,23 @@ export default function SystemLibraryPage() {
                     />
                   </label>
                 </div>
+                <label className="sl-upload-field sl-upload-confirm is-wide">
+                  <span>Cam kết bản quyền</span>
+                  <label className="sl-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={copyrightConfirmed}
+                      onChange={(event) => setCopyrightConfirmed(event.target.checked)}
+                    />
+                    <small>Tôi xác nhận có quyền chia sẻ tài liệu này và tài liệu không vi phạm bản quyền.</small>
+                  </label>
+                  {!copyrightConfirmed && <small>Tick xác nhận để bật nút upload cộng đồng.</small>}
+                </label>
                 <button
                   className="sl-upload-btn"
-                  disabled={loading || !canPublish(user)}
+                  disabled={uploadLoading || !canPublish(user) || !copyrightConfirmed}
                 >
-                  {loading ? "Đang xử lý..." : "Tải lên thư viện"}
+                  {uploadLoading ? "Đang xử lý..." : "Tải lên thư viện"}
                 </button>
               </form>
               <aside className="sl-upload-sidecar" aria-live="polite">
@@ -704,7 +817,7 @@ export default function SystemLibraryPage() {
                   </li>
                   <li
                     className={
-                      loading && uploadStatus.includes("tải")
+                      uploadLoading && uploadStatus.includes("tải")
                         ? "is-active"
                         : uploadProgress >= 100
                           ? "is-done"
@@ -715,7 +828,7 @@ export default function SystemLibraryPage() {
                   </li>
                   <li
                     className={
-                      loading && uploadStatus.includes("đọc")
+                      uploadLoading && uploadStatus.includes("đọc")
                         ? "is-active"
                         : uploadStatus === "Hoàn tất"
                           ? "is-done"
@@ -726,7 +839,7 @@ export default function SystemLibraryPage() {
                   </li>
                   <li
                     className={
-                      loading && uploadStatus.includes("tag")
+                      uploadLoading && uploadStatus.includes("tag")
                         ? "is-active"
                         : uploadStatus === "Hoàn tất"
                           ? "is-done"
@@ -746,23 +859,43 @@ export default function SystemLibraryPage() {
               </aside>
             </div>
           </section>
+
+          {activeTab === "my" && (
+            <section className="sl-my-dashboard" aria-label="Dashboard tài liệu của tôi">
+              {[
+                ["Đã public", documents.filter((doc) => doc.review_status === "published").length],
+                ["Chờ duyệt", documents.filter((doc) => doc.review_status === "pending_review").length],
+                ["Cần chỉnh sửa / Bị từ chối", documents.filter((doc) => ["rejected", "needs_changes"].includes(doc.review_status)).length],
+                ["Đang xử lý", documents.filter((doc) => doc.review_status === "processing" || ["uploaded", "parsing", "metadata_generating", "embedding"].includes(doc.processing_status)).length],
+              ].map(([label, value]) => (
+                <div key={label} className="sl-my-stat"><strong>{value}</strong><span>{label}</span></div>
+              ))}
+            </section>
+          )}
           <div className="sl-body">
             <SystemLibraryFilters
               filters={filters}
               selectedTags={selectedTags}
               suggestedTags={suggestedTags}
-              loading={loading}
+              loading={activeTab === "my" ? myDocumentsLoading : documentsLoading}
               onToggleFilter={(group, value) =>
-                setFilters((current) => ({
-                  ...current,
-                  [group]: toggleInList(current[group] || [], value),
-                }))
+                setFilters((current) => {
+                  if (group === "categories_text") {
+                    return { ...current, categories: value.split(",").map((item) => item.trim()).filter(Boolean) };
+                  }
+                  return { ...current, [group]: toggleInList(current[group] || [], value) };
+                })
               }
               onToggleTag={(tag) =>
                 setSelectedTags((current) => toggleInList(current, tag))
               }
               onBooleanFilter={(key) =>
-                setFilters((current) => ({ ...current, [key]: !current[key] }))
+                setFilters((current) => {
+                  if (key === "is_vector_ready") return { ...current, is_vector_ready: current.is_vector_ready === true ? null : true };
+                  if (key === "metadata_only") return { ...current, is_vector_ready: current.is_vector_ready === false ? null : false };
+                  if (key === "downloadable") return { ...current, downloadable: current.downloadable ? null : true };
+                  return { ...current, [key]: !current[key] };
+                })
               }
               onCitationChange={(value) =>
                 setFilters((current) => ({
@@ -794,7 +927,7 @@ export default function SystemLibraryPage() {
                   <AlertCircle size={30} />
                   <p>{error}</p>
                 </div>
-              ) : loading ? (
+              ) : (activeTab === "my" ? myDocumentsLoading : documentsLoading) ? (
                 <div className="sl-grid">
                   {Array.from({ length: 6 }).map((_, index) => (
                     <div key={index} className="sl-card sl-filter-skeleton">
@@ -812,6 +945,10 @@ export default function SystemLibraryPage() {
                   </p>
                 </div>
               ) : (
+                <>
+                <div className="sl-pagination-summary">
+                  Hiển thị {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} trong {total} tài liệu
+                </div>
                 <div className="sl-grid">
                   {documents.map((document) => (
                     <SystemDocumentCard
@@ -824,9 +961,21 @@ export default function SystemLibraryPage() {
                       onOpenDetails={openDocumentDetails}
                       onDownload={handleDownload}
                       downloading={downloadingId === document.id}
+                      bookmarkLoading={bookmarkingIds.has(document.id)}
+                      showModeration={activeTab === "my"}
+                      onEdit={handleMyDocumentEdit}
+                      onDelete={handleMyDocumentDelete}
+                      onResubmit={handleMyDocumentResubmit}
+                      actionLoading={myDocumentActionId === document.id}
                     />
                   ))}
                 </div>
+                <div className="sl-pagination">
+                  <button type="button" className="sl-toolbar-btn" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1}>Trang trước</button>
+                  <span>Trang {page}</span>
+                  <button type="button" className="sl-toolbar-btn" onClick={() => setPage((value) => value + 1)} disabled={!hasMore}>Trang sau</button>
+                </div>
+                </>
               )}
             </section>
           </div>

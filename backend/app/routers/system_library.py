@@ -4,7 +4,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import RedirectResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.dependencies import get_current_user
 from app.services.system_library_service import (
@@ -19,6 +19,9 @@ from app.services.system_library_service import (
     rate_document,
     remove_bookmark,
     vote_document,
+    update_my_library_document,
+    delete_my_library_document,
+    resubmit_my_library_document,
 )
 from app.services.paper_providers import get_paper_provider
 from app.services.activity_log_service import log_user_activity
@@ -31,7 +34,14 @@ class SystemLibraryFilters(BaseModel):
     peer_review_status: list[Literal["PEER_REVIEWED", "PREPRINT", "UNKNOWN"]] = Field(default_factory=list)
     access_types: list[Literal["OPEN_ACCESS", "FREE_TO_READ", "INSTITUTIONAL_ACCESS", "UNKNOWN"]] = Field(default_factory=list)
     review_types: list[Literal["RESEARCH_ARTICLE", "REVIEW", "SYSTEMATIC_REVIEW", "META_ANALYSIS", "EDITORIAL", "UNKNOWN"]] = Field(default_factory=list)
-    source_types: list[Literal["USER_UPLOAD", "SYSTEM_UPLOAD", "INTERNET"]] = Field(default_factory=list)
+    source_types: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    review_statuses: list[str] = Field(default_factory=list)
+    is_vector_ready: bool | None = None
+    downloadable: bool | None = None
+    year_from: int | None = None
+    year_to: int | None = None
+    has_doi: bool | None = None
     has_pdf: bool = False
     has_data: bool = False
     has_code: bool = False
@@ -39,6 +49,8 @@ class SystemLibraryFilters(BaseModel):
     sort: Literal["newest", "title_az", "title_za", "vote_highest", "citation_highest", "download_highest", "semantic_relevance"] = "newest"
     bookmarked: bool = False
     my_documents: bool = False
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=100)
     # Reserved AI-powered filter schema. Stance is only meaningful when hypothesis is present.
     research_methodology: list[str] = Field(default_factory=list)
     readability_level: list[str] = Field(default_factory=list)
@@ -46,6 +58,21 @@ class SystemLibraryFilters(BaseModel):
     empirical_evidence: list[str] = Field(default_factory=list)
     outcome_stance: list[str] = Field(default_factory=list)
     hypothesis: str = ""
+
+
+    @field_validator("citation_count_min", "year_from", "year_to", mode="before")
+    @classmethod
+    def blank_string_to_none_for_optional_ints(cls, value):
+        if value == "" or value is None:
+            return None
+        return value
+
+    @field_validator("is_vector_ready", "downloadable", "has_doi", mode="before")
+    @classmethod
+    def blank_string_to_none_for_optional_bools(cls, value):
+        if value == "" or value is None:
+            return None
+        return value
 
 
 class SystemLibrarySearchRequest(BaseModel):
@@ -70,6 +97,13 @@ class PaperSearchRequest(BaseModel):
 
 class ImportInternetPaperRequest(BaseModel):
     paper: dict
+
+
+class MyDocumentUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] | str | None = None
 
 
 @router.get("/documents", response_model=dict)
@@ -123,6 +157,7 @@ async def upload_document(
     category: str | None = Form(default=None),
     tags: str = Form(default=""),
     citation_threshold: float | None = Form(default=0),
+    copyright_confirmed: bool = Form(default=False),
     user: dict = Depends(get_current_user),
 ):
     contents = await file.read()
@@ -137,6 +172,7 @@ async def upload_document(
         tags=tags,
         mime_type=file.content_type,
         citation_threshold=0 if citation_threshold is None else citation_threshold,
+        copyright_confirmed=copyright_confirmed,
     )
     log_user_activity(
         user_id=str(user.get("id") or user.get("user_id") or ""),
@@ -152,6 +188,35 @@ async def upload_document(
         },
     )
     return {"success": True, "data": {"document": document}}
+
+
+@router.get("/my-documents", response_model=dict)
+async def my_documents(
+    status_filter: str | None = Query(default=None, alias="status"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user: dict = Depends(get_current_user),
+):
+    filters = {"my_documents": True, "page": page, "page_size": page_size}
+    if status_filter and status_filter != "all":
+        filters["review_statuses"] = [status_filter]
+    data = await list_or_search_documents(user, "", filters)
+    return {"success": True, "data": data}
+
+
+@router.patch("/my-documents/{document_id}", response_model=dict)
+async def update_my_document(document_id: str, body: MyDocumentUpdateRequest, user: dict = Depends(get_current_user)):
+    return {"success": True, "data": update_my_library_document(document_id, user, body.model_dump(exclude_unset=True))}
+
+
+@router.delete("/my-documents/{document_id}", response_model=dict)
+async def delete_my_document(document_id: str, user: dict = Depends(get_current_user)):
+    return {"success": True, "data": delete_my_library_document(document_id, user)}
+
+
+@router.post("/my-documents/{document_id}/resubmit", response_model=dict)
+async def resubmit_my_document(document_id: str, user: dict = Depends(get_current_user)):
+    return {"success": True, "data": resubmit_my_library_document(document_id, user)}
 
 
 @router.post("/papers/search", response_model=dict)

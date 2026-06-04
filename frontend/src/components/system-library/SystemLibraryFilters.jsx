@@ -3,6 +3,25 @@ import { createPortal } from "react-dom";
 import { Search, X } from "lucide-react";
 
 const FILTERS = {
+  source_types: [
+    { value: "system", label: "Hệ thống" },
+    { value: "community", label: "Cộng đồng" },
+    { value: "internet", label: "Internet / OpenAlex" },
+  ],
+  ai_ready: [
+    { value: "vector_ready", label: "Có thể dùng cho AI" },
+    { value: "metadata_only", label: "Chưa index / metadata only" },
+  ],
+  downloadable: [
+    { value: "downloadable", label: "Có file tải xuống" },
+    { value: "external_only", label: "Chỉ link ngoài" },
+  ],
+  review_statuses: [
+    { value: "pending_review", label: "Pending" },
+    { value: "published", label: "Published" },
+    { value: "rejected", label: "Rejected" },
+    { value: "hidden", label: "Hidden" },
+  ],
   peer_review_status: [
     { value: "PEER_REVIEWED", label: "Đã bình duyệt" },
     { value: "PREPRINT", label: "Bản thảo / preprint" },
@@ -187,6 +206,46 @@ export default function SystemLibraryFilters({
           Đang lọc/search tài liệu...
         </div>
       )}
+      <FilterGroup
+        title="Nguồn tài liệu"
+        options={FILTERS.source_types}
+        value={filters.source_types || []}
+        onToggle={(value) => onToggleFilter("source_types", value)}
+      />
+      <div className="sl-filter-group">
+        <h3>Category</h3>
+        <input
+          value={(filters.categories || []).join(", ")}
+          onChange={(event) => onToggleFilter("categories_text", event.target.value)}
+          placeholder="Nhập category, cách nhau bằng dấu phẩy"
+        />
+      </div>
+      <div className="sl-filter-group">
+        <h3>Trạng thái xử lý / AI-ready</h3>
+        <div className="sl-filter-options">
+          <label className={`sl-filter-chip ${filters.is_vector_ready === true ? "is-active" : ""}`}>
+            <input type="checkbox" checked={filters.is_vector_ready === true} onChange={() => onBooleanFilter("is_vector_ready")} />
+            <span>Có thể dùng cho AI</span>
+          </label>
+          <label className={`sl-filter-chip ${filters.is_vector_ready === false ? "is-active" : ""}`}>
+            <input type="checkbox" checked={filters.is_vector_ready === false} onChange={() => onBooleanFilter("metadata_only")} />
+            <span>Chưa index / metadata only</span>
+          </label>
+        </div>
+      </div>
+      <div className="sl-filter-group">
+        <h3>Có thể tải xuống</h3>
+        <label className={`sl-filter-chip ${filters.downloadable ? "is-active" : ""}`}>
+          <input type="checkbox" checked={Boolean(filters.downloadable)} onChange={() => onBooleanFilter("downloadable")} />
+          <span>Có file tải xuống</span>
+        </label>
+      </div>
+      <FilterGroup
+        title="Trạng thái kiểm duyệt"
+        options={FILTERS.review_statuses}
+        value={filters.review_statuses || []}
+        onToggle={(value) => onToggleFilter("review_statuses", value)}
+      />
       <div className="sl-filter-group">
         <div className="sl-filter-group__title-row">
           <h3>Tags gợi ý</h3>

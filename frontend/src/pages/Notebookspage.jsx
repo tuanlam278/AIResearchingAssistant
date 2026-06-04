@@ -18,17 +18,18 @@ const STYLES = `
   }
 
   /* Content */
-  .nb-content { max-width: 760px; margin: 0 auto; padding: 40px 24px 0; }
+  .nb-content { max-width: 980px; margin: 0 auto; padding: 40px 24px 0; }
 
   .nb-header-row {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    margin-bottom: 24px; padding: 22px; border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 18px; background: rgba(255,255,255,0.025);
   }
   .nb-heading {
     font-family: 'Lora', Georgia, serif;
     font-size: 22px; font-weight: 600; color: #e8e0d0;
   }
-  .nb-heading-sub { font-size: 13px; color: #5a5040; margin-top: 4px; font-style: italic; }
+  .nb-heading-sub { font-size: 13px; color: #8a8070; margin-top: 6px; max-width: 560px; line-height: 1.5; }
 
   /* Create button */
   .nb-create-btn {
@@ -102,11 +103,11 @@ const STYLES = `
   .nb-modal-confirm:not(:disabled):hover { opacity: 0.9; }
 
   /* Notebook cards */
-  .nb-grid { display: flex; flex-direction: column; gap: 12px; }
+  .nb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 
   .nb-card {
     display: flex; align-items: center; gap: 16px;
-    padding: 18px 20px;
+    padding: 18px 20px; min-height: 94px;
     background: rgba(255,255,255,0.02);
     border: 1px solid rgba(255,255,255,0.07);
     border-radius: 14px; cursor: pointer;
@@ -134,13 +135,13 @@ const STYLES = `
   .nb-card-meta { font-size: 12px; color: #5a5040; }
   .nb-card-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
   .nb-action-btn {
-    width: 32px; height: 32px; border-radius: 8px; border: none;
-    background: transparent; cursor: pointer; color: #4a4030;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 15px; transition: color 0.2s, background 0.2s;
+    min-width: 32px; height: 32px; border-radius: 999px; border: 1px solid transparent;
+    background: transparent; cursor: pointer; color: #6a6050;
+    display: flex; align-items: center; justify-content: center; gap: 5px;
+    padding: 0 9px; font-size: 13px; transition: color 0.2s, background 0.2s, border-color 0.2s;
   }
   .nb-action-btn:hover { color: #c4a464; background: rgba(196,164,100,0.08); }
-  .nb-action-btn.is-starred { color: #f3c85f; background: rgba(243,200,95,0.1); }
+  .nb-action-btn.is-starred { color: #1a1510; background: linear-gradient(135deg,#f3c85f,#c4a464); border-color: rgba(243,200,95,0.55); font-weight: 700; }
   .nb-delete-btn:hover { color: #e07878; background: rgba(200,80,80,0.08); }
   .nb-arrow { color: #3a3020; font-size: 18px; }
 
@@ -176,6 +177,8 @@ const STYLES = `
     to { opacity: 1; transform: translateY(0) scale(1); }
   }
 `;
+const isNotebookStarred = (notebook = {}) => notebook.is_starred === true || notebook.is_starred === 'true' || notebook.is_starred === 1;
+
 
 export default function NotebooksPage() {
   const navigate = useNavigate();
@@ -240,7 +243,7 @@ export default function NotebooksPage() {
 
   const toggleNotebookStar = async (e, nb) => {
     e.stopPropagation();
-    const previous = Boolean(nb.is_starred);
+    const previous = isNotebookStarred(nb);
     setNotebooks((prev) => prev.map((item) => (item.notebook_id === nb.notebook_id ? { ...item, is_starred: !previous } : item)));
     try {
       const result = await api.updateNotebook(nb.notebook_id, { is_starred: !previous }, token);
@@ -253,8 +256,8 @@ export default function NotebooksPage() {
   };
 
   const sortedNotebooks = [...notebooks].sort((a, b) => {
-    if (Boolean(a.is_starred) !== Boolean(b.is_starred)) return a.is_starred ? -1 : 1;
-    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    if (isNotebookStarred(a) !== isNotebookStarred(b)) return isNotebookStarred(a) ? -1 : 1;
+    return new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0);
   });
 
   const openModal = () => { setNewName(''); setShowModal(true); };
@@ -269,7 +272,7 @@ export default function NotebooksPage() {
           <div className="nb-header-row">
             <div>
               <h1 className="nb-heading">Notebooks của bạn</h1>
-              <p className="nb-heading-sub">Mỗi notebook chứa các tài liệu PDF để nghiên cứu cùng nhau</p>
+              <p className="nb-heading-sub">Tạo notebook như cũ, sau đó mở vào Research Workspace để upload tài liệu, chat RAG, ghi chú và kiểm chứng nguồn trong cùng một nơi.</p>
             </div>
             <button className="nb-create-btn" onClick={openModal}>
               + Notebook mới
@@ -287,7 +290,7 @@ export default function NotebooksPage() {
             <div className="nb-empty">
               <div className="nb-empty-icon">📓</div>
               <p className="nb-empty-title">Chưa có notebook nào.</p>
-              <p className="nb-empty-sub">Nhấn "Notebook mới" để bắt đầu.</p>
+              <p className="nb-empty-sub">Nhấn "Notebook mới" để tạo không gian nghiên cứu đầu tiên, rồi mở notebook để vào Research Workspace.</p>
             </div>
           ) : (
             <div className="nb-grid">
@@ -312,12 +315,12 @@ export default function NotebooksPage() {
                   </div>
                   <div className="nb-card-actions">
                     <button
-                      className={`nb-action-btn ${nb.is_starred ? 'is-starred' : ''}`}
+                      className={`nb-action-btn ${isNotebookStarred(nb) ? 'is-starred' : ''}`}
                       onClick={(e) => toggleNotebookStar(e, nb)}
-                      aria-label={nb.is_starred ? 'Bỏ đánh dấu notebook quan trọng' : 'Đánh dấu notebook quan trọng'}
-                      title={nb.is_starred ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
+                      aria-label={isNotebookStarred(nb) ? 'Bỏ đánh dấu notebook quan trọng' : 'Đánh dấu notebook quan trọng'}
+                      title={isNotebookStarred(nb) ? 'Bỏ đánh dấu quan trọng' : 'Đánh dấu quan trọng'}
                     >
-                      {nb.is_starred ? '★' : '☆'}
+                      <span>{isNotebookStarred(nb) ? '★' : '☆'}</span><span>{isNotebookStarred(nb) ? 'Đã sao' : 'Sao'}</span>
                     </button>
                     <button
                       className="nb-action-btn nb-delete-btn"
@@ -326,7 +329,7 @@ export default function NotebooksPage() {
                     >
                       🗑
                     </button>
-                    <span className="nb-arrow">›</span>
+                    <span className="nb-arrow" title="Mở Research Workspace">›</span>
                   </div>
                 </div>
               ))}

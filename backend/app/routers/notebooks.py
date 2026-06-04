@@ -396,6 +396,8 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             "page_count": page_count,
             "chunk_count": chunk_count,
             "status": "ready",
+            "processing_status": "ready",
+            "is_vector_ready": True,
             "citation_threshold": _normalize_citation_threshold(citation_threshold),
             "tags": _parse_tags(tags),
         }
@@ -405,6 +407,8 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             # Backward-compatible fallback for databases that have not added file_type/status yet.
             document_payload.pop("file_type", None)
             document_payload.pop("status", None)
+            document_payload.pop("processing_status", None)
+            document_payload.pop("is_vector_ready", None)
             document_payload.pop("citation_threshold", None)
             document_payload.pop("tags", None)
             resp = supabase.table("documents").insert(document_payload).execute()
@@ -458,6 +462,9 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
         "size": len(contents),
         "created_at": created_at,
         "status": "ready",
+        "processing_status": "ready",
+        "processing_error": None,
+        "is_vector_ready": True,
     }
 
 
@@ -491,7 +498,7 @@ async def list_documents_in_notebook(
     try:
         try:
             resp = supabase.table("documents").select(
-                "id, filename, file_type, status, page_count, chunk_count, created_at"
+                "id, filename, file_type, status, processing_status, processing_error, is_vector_ready, page_count, chunk_count, created_at"
             ).eq("notebook_id", notebook_id).order("created_at", desc=False).execute()
         except Exception:
             resp = supabase.table("documents").select(
@@ -517,6 +524,9 @@ async def list_documents_in_notebook(
             "filename": row["filename"],
             "file_type": row.get("file_type") or get_file_type(row.get("filename")),
             "status": row.get("status") or "ready",
+            "processing_status": row.get("processing_status") or row.get("status") or "ready",
+            "processing_error": row.get("processing_error"),
+            "is_vector_ready": row.get("is_vector_ready") if row.get("is_vector_ready") is not None else ((row.get("status") or "ready") == "ready"),
             "page_count": row["page_count"],
             "chunk_count": row["chunk_count"],
             "created_at": row["created_at"],
@@ -586,7 +596,7 @@ async def link_system_document_to_notebook(
         existing_rows, _ = _supabase_response_data(existing_resp)
         if existing_rows:
             row = existing_rows[0]
-            return {"success": True, "data": {"document": {"doc_id": row["id"], "id": row["id"], "filename": row["filename"], "file_type": row.get("file_type"), "status": row.get("status") or "ready", "page_count": row.get("page_count"), "chunk_count": row.get("chunk_count"), "created_at": row.get("created_at"), "source_type": "system_document", "source_id": body.system_document_id}, "already_linked": True}}
+            return {"success": True, "data": {"document": {"doc_id": row["id"], "id": row["id"], "filename": row["filename"], "file_type": row.get("file_type"), "status": row.get("status") or "ready", "processing_status": row.get("processing_status") or row.get("status") or "ready", "processing_error": row.get("processing_error"), "is_vector_ready": row.get("is_vector_ready") if row.get("is_vector_ready") is not None else ((row.get("status") or "ready") == "ready"), "page_count": row.get("page_count"), "chunk_count": row.get("chunk_count"), "created_at": row.get("created_at"), "source_type": "system_document", "source_id": body.system_document_id}, "already_linked": True}}
     except Exception:
         # Older schema may not have source_type/source_id yet; continue and rely on filename uniqueness.
         pass
@@ -607,14 +617,17 @@ async def link_system_document_to_notebook(
         "page_count": system_doc.get("page_count") or 0,
         "chunk_count": len(chunks),
         "status": "ready",
+        "processing_status": "ready",
+        "is_vector_ready": True,
         "source_type": "system_document",
         "source_id": body.system_document_id,
     }
     try:
         insert_resp = supabase.table("documents").insert(doc_payload).execute()
-    except Exception:
-        doc_payload.pop("source_type", None)
-        doc_payload.pop("source_id", None)
+    except Exception as exc:
+        logger.warning("Insert linked system document with extended columns failed, retrying with legacy payload: %s", exc)
+        for optional_key in ("file_type", "status", "processing_status", "is_vector_ready", "source_type", "source_id"):
+            doc_payload.pop(optional_key, None)
         insert_resp = supabase.table("documents").insert(doc_payload).execute()
     inserted, insert_error = _supabase_response_data(insert_resp)
     if insert_error or not inserted:
@@ -642,4 +655,4 @@ async def link_system_document_to_notebook(
         supabase.table("documents").delete().eq("id", linked_doc_id).execute()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail={"code": "CHUNK_INSERT_FAILED", "message": "Không thể đưa tài liệu hệ thống vào RAG notebook"}) from exc
 
-    return {"success": True, "data": {"document": {"doc_id": linked_doc_id, "id": linked_doc_id, "filename": linked_doc.get("filename") or linked_filename, "file_type": linked_doc.get("file_type") or system_doc.get("file_type"), "status": "ready", "page_count": linked_doc.get("page_count") or system_doc.get("page_count"), "chunk_count": len(chunks), "created_at": linked_doc.get("created_at"), "source_type": "system_document", "source_id": body.system_document_id}, "already_linked": False}}
+    return {"success": True, "data": {"document": {"doc_id": linked_doc_id, "id": linked_doc_id, "filename": linked_doc.get("filename") or linked_filename, "file_type": linked_doc.get("file_type") or system_doc.get("file_type"), "status": "ready", "processing_status": linked_doc.get("processing_status") or "ready", "processing_error": linked_doc.get("processing_error"), "is_vector_ready": linked_doc.get("is_vector_ready") if linked_doc.get("is_vector_ready") is not None else True, "page_count": linked_doc.get("page_count") or system_doc.get("page_count"), "chunk_count": len(chunks), "created_at": linked_doc.get("created_at"), "source_type": "system_document", "source_id": body.system_document_id}, "already_linked": False}}
