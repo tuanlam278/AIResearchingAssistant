@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from app.db.supabase_client import supabase
 from app.dependencies import get_current_user
 from app.services.activity_log_service import log_user_activity
+from app.utils.filenames import normalize_upload_filename
 from app.services.cross_analysis_service import get_document_preview, resolve_document, upload_temp_document
 from app.services.embedder import embed_query
 from app.services.llm import GROQ_MODEL, client
@@ -235,7 +236,7 @@ async def _load_enabled_web_contexts(user_id: str, session_id: str | None, enabl
 @router.post("/documents/upload", response_model=dict)
 async def upload_academic_lens_document(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     contents = await file.read()
-    filename = file.filename or "academic-document"
+    filename = normalize_upload_filename(file.filename, "academic-document")
     document = await upload_temp_document(contents, filename)
     document["storage_status"] = "temporary"
     document["is_temporary"] = True

@@ -11,6 +11,7 @@ import { api } from '../services/api';
 const ACADEMIC_LENS_SESSION_KEY = 'academicLens:session';
 const ACADEMIC_LENS_LAST_PATH_KEY = 'academicLens:lastPath';
 const ACADEMIC_LENS_LAYOUT_KEY = 'academicLens:layoutPreferences';
+const AUTH_USER_KEY = 'ai-research-user';
 
 const DEFAULT_LAYOUT = {
   academicLensLayoutMode: 'reading',
@@ -42,7 +43,10 @@ const loadAcademicLensLayout = () => {
 
 const loadAcademicLensSession = () => {
   try {
-    return JSON.parse(localStorage.getItem(ACADEMIC_LENS_SESSION_KEY) || '{}') || {};
+    const session = JSON.parse(localStorage.getItem(ACADEMIC_LENS_SESSION_KEY) || '{}') || {};
+    const user = JSON.parse(localStorage.getItem(AUTH_USER_KEY) || 'null');
+    const currentUserId = user?.id || user?.user_id || user?.email || null;
+    return currentUserId && session.owner_user_id === currentUserId ? session : {};
   } catch {
     return {};
   }
@@ -255,7 +259,7 @@ function LibraryModal({ open, onClose, onSelect }) {
 }
 
 export default function AcademicLensPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const savedSession = useMemo(loadAcademicLensSession, []);
   const savedLayout = useMemo(loadAcademicLensLayout, []);
   const fileInputRef = useRef(null);
@@ -288,8 +292,8 @@ export default function AcademicLensPage() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(ACADEMIC_LENS_SESSION_KEY, JSON.stringify({ document, activeTab, messages, webContexts, sessionId }));
-  }, [document, activeTab, messages, webContexts, sessionId]);
+    localStorage.setItem(ACADEMIC_LENS_SESSION_KEY, JSON.stringify({ owner_user_id: user?.id || user?.user_id || user?.email || null, document, activeTab, messages, webContexts, sessionId }));
+  }, [user, document, activeTab, messages, webContexts, sessionId]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -307,6 +311,20 @@ export default function AcademicLensPage() {
     const timeout = setTimeout(() => setNoteToast(''), 1800);
     return () => clearTimeout(timeout);
   }, [noteToast]);
+
+  useEffect(() => {
+    const clearSession = () => {
+      setDocument(null);
+      setMessages([]);
+      setWebContexts([]);
+      setSessionId(null);
+      setNotepad('');
+      setActiveCitation(null);
+      setPendingImage(null);
+    };
+    window.addEventListener('auth:clear-session-data', clearSession);
+    return () => window.removeEventListener('auth:clear-session-data', clearSession);
+  }, []);
 
   const updateLayout = (patch) => setLayout((current) => ({ ...current, ...patch }));
 

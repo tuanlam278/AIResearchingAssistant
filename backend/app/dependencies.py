@@ -11,6 +11,16 @@ from app.services.internal_jwt_service import verify_app_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 DEV_ADMIN_TOKEN = "dev-admin-token"
+REVOKED_ACCESS_TOKENS: set[str] = set()
+
+
+def revoke_access_token(token: str | None) -> None:
+    if token:
+        REVOKED_ACCESS_TOKENS.add(token)
+
+
+def is_access_token_revoked(token: str | None) -> bool:
+    return bool(token and token in REVOKED_ACCESS_TOKENS)
 
 
 def _supabase_response_data(resp: Any):
@@ -99,6 +109,11 @@ async def get_current_user(
         )
 
     token = credentials.credentials
+    if is_access_token_revoked(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "SESSION_REVOKED", "message": "Phiên đăng nhập đã được đăng xuất"},
+        )
     if token == DEV_ADMIN_TOKEN:
         return {"user_id": "dev-admin", "id": "dev-admin", "email": settings.SYSTEM_LIBRARY_ADMIN_EMAIL or "admin", "role": "admin"}
 

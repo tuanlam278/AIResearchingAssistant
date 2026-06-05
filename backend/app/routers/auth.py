@@ -15,6 +15,7 @@ from app.dependencies import (
     _role_from_auth_user,
     _role_from_profile,
     get_current_user,
+    revoke_access_token,
 )
 from app.models.schemas import LoginRequest, RegisterRequest
 from app.services.google_auth_service import verify_google_credential
@@ -164,6 +165,9 @@ def _user_payload(
         "name": display,
         "email": email,
         "avatar_url": profile.get("avatar_url"),
+        "username": profile.get("display_name"),
+        "display_name": profile.get("display_name"),
+        "full_name": profile.get("full_name"),
         "role": role,
         "canUploadLibraryDocuments": profile.get("can_upload_library_documents", profile.get("can_publish_documents", True)),
         "can_upload_library_documents": profile.get("can_upload_library_documents", profile.get("can_publish_documents", True)),
@@ -210,6 +214,37 @@ def _profile_by_google_id(google_id: str) -> Dict[str, Any]:
         print(f"PROFILE GOOGLE LOOKUP FAILED: {exc}")
 
     return {}
+
+
+def _profile_by_username(username: str) -> Dict[str, Any]:
+    value = _normalize_display_name(username)
+    if not value:
+        return {}
+    try:
+        resp = (
+            supabase.table("profiles")
+            .select("*")
+            .ilike("display_name", value)
+            .limit(1)
+            .execute()
+        )
+        rows, error = _supabase_response_data(resp)
+
+        if not error and rows:
+            return rows[0]
+    except Exception as exc:
+        print(f"PROFILE USERNAME LOOKUP FAILED: {exc}")
+
+    return {}
+
+
+def _login_email_from_identifier(identifier: str) -> str:
+    value = str(identifier or "").strip()
+    if "@" in value:
+        return value
+    profile = _profile_by_username(value)
+    email = profile.get("email")
+    return str(email or value)
 
 
 def _profile_by_email(email: str) -> Dict[str, Any]:
@@ -371,7 +406,7 @@ def _confirm_password_user_email(email: str) -> bool:
 
 @router.post("/register")
 async def register(payload: RegisterRequest) -> Dict[str, Any]:
-    display_name = _normalize_display_name(payload.name)
+    display_name = _normalize_display_name(payload.username or payload.name)
     if display_name and _display_name_exists(display_name):
         _raise_display_name_taken()
 
@@ -477,7 +512,9 @@ async def register(payload: RegisterRequest) -> Dict[str, Any]:
 
 @router.post("/login")
 async def login(payload: LoginRequest) -> Dict[str, Any]:
-    if _is_dev_admin_login(payload.email, payload.password):
+    login_email = _login_email_from_identifier(payload.email)
+
+    if _is_dev_admin_login(payload.email, payload.password) or _is_dev_admin_login(login_email, payload.password):
         return {
             "success": True,
             "data": {
@@ -496,7 +533,7 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
     try:
         resp = client.auth.sign_in_with_password(
             {
-                "email": payload.email,
+                "email": login_email,
                 "password": payload.password,
             }
         )
@@ -527,12 +564,12 @@ async def login(payload: LoginRequest) -> Dict[str, Any]:
         message = getattr(error, "message", str(error))
 
         if "email not confirmed" in message.lower() and _confirm_password_user_email(
-            payload.email
+            login_email
         ):
             try:
                 resp = client.auth.sign_in_with_password(
                     {
-                        "email": payload.email,
+                        "email": login_email,
                         "password": payload.password,
                     }
                 )
@@ -662,6 +699,9 @@ async def logout(request: Request) -> Dict[str, Any]:
         )
 
     try:
+        logout_token = authorization.split(" ", 1)[1].strip()
+        if logout_token != DEV_ADMIN_TOKEN:
+            revoke_access_token(logout_token)
         supabase.auth.sign_out()
     except Exception:
         pass
@@ -840,12 +880,24 @@ def _password_reset_success(message: str) -> Dict[str, Any]:
 
 
 def _get_reset_auth_user(email: str) -> Any | None:
-    return _auth_user_by_email(str(email))
+    normalized_email = str(email or "").strip().lower()
+    auth_user = _auth_user_by_email(normalized_email)
+    if auth_user:
+        return auth_user
+
+    # Some Supabase deployments disallow admin.list_users even when profile
+    # reads are available. Falling back to profiles lets password reset proceed
+    # as long as admin.update_user_by_id is allowed for the resolved id.
+    profile = _profile_by_email(normalized_email)
+    if profile.get("id"):
+        return {"id": str(profile["id"]), "email": profile.get("email") or normalized_email}
+
+    return None
 
 
 def _require_valid_otp_format(otp: str) -> str:
     value = str(otp or "").strip()
-    if len(value) != 6 or not value.isdigit():
+    if len(value) != 4 or not value.isdigit():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
@@ -867,10 +919,6 @@ def _require_valid_new_password(new_password: str) -> None:
 @router.post("/password-reset/request")
 async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str, Any]:
     normalized_email = str(payload.email).strip().lower()
-    auth_user = _get_reset_auth_user(normalized_email)
-
-    if not auth_user:
-        return _password_reset_success(GENERIC_RESET_REQUEST_MESSAGE)
 
     try:
         otp = create_password_reset_otp(normalized_email)
@@ -880,7 +928,7 @@ async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "code": "PASSWORD_RESET_OTP_PERSIST_FAILED",
-                "message": "Không thể tạo mã xác thực. Vui lòng kiểm tra migration password_reset_otps và thử lại sau.",
+                "message": "Không thể tạo mã xác thực. Vui lòng thử lại sau.",
             },
         ) from exc
 
@@ -913,11 +961,6 @@ async def request_password_reset_otp(payload: PasswordResetRequest) -> Dict[str,
 @router.post("/password-reset/verify")
 async def verify_password_reset(payload: PasswordResetVerifyRequest) -> Dict[str, Any]:
     otp = _require_valid_otp_format(payload.otp)
-    if not _get_reset_auth_user(str(payload.email)):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVALID_OTP", "message": OTP_INVALID_MESSAGE},
-        )
 
     try:
         valid, message = verify_password_reset_otp(str(payload.email), otp)

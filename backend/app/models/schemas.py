@@ -29,6 +29,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=6)
     confirm_password: Optional[str] = Field(default=None, min_length=6)
     name: Optional[str] = Field(default=None, max_length=160)
+    username: Optional[str] = Field(default=None, max_length=80)
 
 
 class UserInfo(BaseModel):

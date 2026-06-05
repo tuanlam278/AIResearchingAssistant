@@ -227,7 +227,17 @@ function toDocumentRef(doc) {
 }
 
 const CROSS_ANALYSIS_DRAFT_KEY = 'cross-analysis-current-draft-v1';
+const AUTH_USER_KEY = 'ai-research-user';
 let crossAnalysisMemoryDraft = null;
+
+function currentStoredUserId() {
+  try {
+    const user = JSON.parse(window.localStorage.getItem(AUTH_USER_KEY) || 'null');
+    return user?.id || user?.user_id || user?.email || null;
+  } catch {
+    return null;
+  }
+}
 
 function stripVolatileDocumentFields(doc) {
   if (!doc) return null;
@@ -264,21 +274,31 @@ function sanitizeCrossAnalysisDraft(draft) {
   };
 }
 
+function draftBelongsToCurrentUser(draft) {
+  if (!draft) return false;
+  const currentUserId = currentStoredUserId();
+  return Boolean(currentUserId && draft.owner_user_id === currentUserId);
+}
+
 function loadStoredCrossAnalysisDraft() {
-  if (crossAnalysisMemoryDraft) return crossAnalysisMemoryDraft;
+  if (draftBelongsToCurrentUser(crossAnalysisMemoryDraft)) return crossAnalysisMemoryDraft;
+  if (crossAnalysisMemoryDraft && !draftBelongsToCurrentUser(crossAnalysisMemoryDraft)) crossAnalysisMemoryDraft = null;
   try {
     const raw = window.sessionStorage.getItem(CROSS_ANALYSIS_DRAFT_KEY);
-    return raw ? JSON.parse(raw) : null;
+    const parsed = raw ? JSON.parse(raw) : null;
+    return draftBelongsToCurrentUser(parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
 function storeCrossAnalysisDraft(draft) {
-  crossAnalysisMemoryDraft = draft;
+  const ownerUserId = currentStoredUserId();
+  const ownedDraft = draft && ownerUserId ? { ...draft, owner_user_id: ownerUserId } : draft;
+  crossAnalysisMemoryDraft = ownedDraft;
   try {
-    if (hasCrossAnalysisDraftContent(draft)) {
-      window.sessionStorage.setItem(CROSS_ANALYSIS_DRAFT_KEY, JSON.stringify(sanitizeCrossAnalysisDraft(draft)));
+    if (ownerUserId && hasCrossAnalysisDraftContent(ownedDraft)) {
+      window.sessionStorage.setItem(CROSS_ANALYSIS_DRAFT_KEY, JSON.stringify(sanitizeCrossAnalysisDraft(ownedDraft)));
     } else {
       window.sessionStorage.removeItem(CROSS_ANALYSIS_DRAFT_KEY);
     }
@@ -645,7 +665,7 @@ function DocumentPreviewPanel({ label, document }) {
     <article className="ca-doc-panel">
       <div className="ca-doc-panel__header">
         <h3>Tài liệu {label}: {document?.title || 'Chưa chọn'}</h3>
-        <p className="ca-muted">{sourceLabel(document)} · {document?.filename || '—'}</p>
+        {(!document || !isPdfDocument(document)) && <p className="ca-muted">{sourceLabel(document)} · {document?.filename || '—'}</p>}
       </div>
 
       {document && isPdfDocument(document) ? (
@@ -688,7 +708,7 @@ function DocumentPreviewPanel({ label, document }) {
 
 
 export default function CrossAnalysisPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const initialDraft = loadStoredCrossAnalysisDraft();
   const [documentA, setDocumentA] = useState(initialDraft?.documentA || null);
   const [documentB, setDocumentB] = useState(initialDraft?.documentB || null);
@@ -707,6 +727,19 @@ export default function CrossAnalysisPage() {
   const [loading, setLoading] = useState('');
   const [error, setError] = useState('');
   const previewUrlsRef = useRef(new Set());
+
+  useEffect(() => {
+    const clearDraft = () => {
+      crossAnalysisMemoryDraft = null;
+      setDocumentA(null);
+      setDocumentB(null);
+      setCurrentSessionId(null);
+      setComparisonResult(null);
+      setChatMessages([]);
+    };
+    window.addEventListener('auth:clear-session-data', clearDraft);
+    return () => window.removeEventListener('auth:clear-session-data', clearDraft);
+  }, []);
 
   const setDocumentForSlot = (slot, nextDocument) => {
     const setter = slot === 'A' ? setDocumentA : setDocumentB;
@@ -733,6 +766,7 @@ export default function CrossAnalysisPage() {
   const sameWarning = sameDocument(documentA, documentB) ? 'Vui lòng chọn hai tài liệu khác nhau để so sánh.' : '';
   const payload = useMemo(() => ({ document_a: toDocumentRef(documentA), document_b: toDocumentRef(documentB) }), [documentA, documentB]);
   const currentDraft = useMemo(() => ({
+    owner_user_id: user?.id || user?.user_id || user?.email || null,
     documentA,
     documentB,
     selectedPreset,
@@ -740,7 +774,7 @@ export default function CrossAnalysisPage() {
     currentSessionId,
     comparisonResult,
     chatMessages,
-  }), [documentA, documentB, selectedPreset, selectedCriteria, currentSessionId, comparisonResult, chatMessages]);
+  }), [user, documentA, documentB, selectedPreset, selectedCriteria, currentSessionId, comparisonResult, chatMessages]);
   const hasDraftContent = hasCrossAnalysisDraftContent(currentDraft);
 
   useEffect(() => {

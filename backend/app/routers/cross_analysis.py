@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.dependencies import get_current_user
 from app.services.cross_analysis_service import chat_about_documents, compare_documents, create_cross_analysis_session, delete_cross_analysis_session, detect_conflicts, get_cross_analysis_session, get_document_preview, list_cross_analysis_sessions, synthesize_documents, update_cross_analysis_session, upload_temp_document
 from app.services.activity_log_service import log_user_activity
+from app.utils.filenames import normalize_upload_filename
 
 router = APIRouter(tags=["cross-analysis"])
 
@@ -50,7 +51,7 @@ class CrossAnalysisSessionRequest(BaseModel):
 @router.post("/documents/upload", response_model=dict)
 async def upload_cross_analysis_document(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     contents = await file.read()
-    filename = file.filename or "uploaded-document"
+    filename = normalize_upload_filename(file.filename, "uploaded-document")
     document = await upload_temp_document(contents, filename)
     user_id = str(user.get("id") or user.get("user_id") or user.get("email") or "")
     log_user_activity(

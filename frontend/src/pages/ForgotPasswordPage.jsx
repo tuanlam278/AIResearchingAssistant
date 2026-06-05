@@ -39,8 +39,8 @@ export default function ForgotPasswordPage() {
 
   const confirmReset = async (event) => {
     event.preventDefault();
-    if (!/^\d{6}$/.test(otp)) {
-      setError('Vui lòng nhập OTP gồm 6 số.');
+    if (!/^\d{4}$/.test(otp)) {
+      setError('Vui lòng nhập OTP gồm 4 số.');
       return;
     }
     if (!passwords.newPassword || !passwords.confirmPassword) {
@@ -77,7 +77,7 @@ export default function ForgotPasswordPage() {
       <section className="reset-card">
         <div className="reset-logo">✦</div>
         <h1>Đặt lại mật khẩu</h1>
-        <p className="muted">Nhận OTP 6 số qua email bất kỳ rồi đặt mật khẩu mới. Hệ thống không dùng link reset.</p>
+        <p className="muted">Nhận OTP 4 số qua email tài khoản rồi đặt mật khẩu mới. Hệ thống không dùng link reset.</p>
 
         <div className="steps" aria-label="Tiến trình đặt lại mật khẩu">
           {[1, 2].map((item) => <span key={item} className={step >= item ? 'active' : ''}>{item}</span>)}
@@ -95,7 +95,7 @@ export default function ForgotPasswordPage() {
 
         {step === 2 ? (
           <form onSubmit={confirmReset}>
-            <label>OTP 6 số<input inputMode="numeric" pattern="\d{6}" maxLength={6} required value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="••••••" /></label>
+            <label>OTP 4 số<input inputMode="numeric" pattern="\d{4}" maxLength={4} required value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••" /></label>
             <label>Mật khẩu mới<input type="password" minLength={6} required value={passwords.newPassword} onChange={(e) => setPasswords({ ...passwords, newPassword: e.target.value })} /></label>
             <label>Nhập lại mật khẩu mới<input type="password" minLength={6} required value={passwords.confirmPassword} onChange={(e) => setPasswords({ ...passwords, confirmPassword: e.target.value })} /></label>
             <button disabled={loading}>{loading ? 'Đang cập nhật...' : 'Cập nhật mật khẩu'}</button>

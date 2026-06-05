@@ -285,7 +285,7 @@ export default function LoginPage() {
             <p className="auth-google-note">Google Login cần cấu hình VITE_GOOGLE_CLIENT_ID.</p>
           )}
 
-          <div className="auth-or">hoặc đăng nhập bằng email</div>
+          <div className="auth-or">hoặc đăng nhập bằng email / username</div>
 
           {error && (
             <div className="auth-error">
@@ -295,15 +295,15 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin}>
             <div className="auth-field">
-              <label className="auth-label">Email</label>
+              <label className="auth-label">Email hoặc username</label>
               <input
                 className="auth-input"
                 type="text"
                 required
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                placeholder="ten@example.com hoặc admin"
-                autoComplete="email"
+                placeholder="ten@example.com, username hoặc admin"
+                autoComplete="username"
               />
             </div>
 

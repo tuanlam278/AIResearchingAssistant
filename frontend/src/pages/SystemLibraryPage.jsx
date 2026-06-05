@@ -46,10 +46,20 @@ const STYLES = `
   .sl-hero__eyebrow { display: inline-flex; align-items: center; gap: 8px; color: #d8bd77; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
   .sl-hero h1 { margin: 12px 0 10px; color: #f3ebdc; font-size: clamp(28px, 5vw, 50px); line-height: 1.04; }
   .sl-hero p, .sl-upload-panel p, .sl-paper-panel p { max-width: 860px; color: #9f9587; line-height: 1.7; font-size: 15px; }
-  .sl-hero__stats, .sl-tabs, .sl-paper-search { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
-  .sl-tab, .sl-stat { padding: 11px 14px; border-radius: 16px; background: rgba(0,0,0,0.18); border: 1px solid rgba(255,255,255,0.07); color: #bfb4a3; font-size: 12px; cursor: pointer; }
-  .sl-tab.is-active { color: #1a130c; background: #d4b66f; font-weight: 800; }
-  .sl-stat strong { color: #f0d089; font-size: 18px; margin-right: 6px; }
+  .sl-tabs, .sl-paper-search { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .sl-tabs { width: fit-content; max-width: 100%; padding: 6px; border: 1px solid rgba(255,255,255,.08); border-radius: 22px; background: rgba(0,0,0,.2); }
+  .sl-tab { min-height: 42px; padding: 0 15px; border-radius: 16px; background: rgba(255,255,255,.035); border: 1px solid transparent; color: #a99f90; font-size: 12px; font-weight: 800; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease, transform .16s ease; }
+  .sl-tab:hover:not(.is-active) { color: #efe6d8; border-color: rgba(212,182,111,.22); background: rgba(212,182,111,.08); }
+  .sl-tab:focus-visible, .sl-section-tab:focus-visible { outline: 2px solid rgba(212,182,111,.72); outline-offset: 3px; }
+  .sl-tab.is-active { color: #1a130c; background: linear-gradient(135deg, #ead18a, #b98a3c); border-color: rgba(255,235,168,.38); font-weight: 900; box-shadow: 0 12px 28px rgba(212,182,111,.2); }
+  .sl-hero__stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .sl-stat { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.07); color: #958b7d; font-size: 12px; }
+  .sl-stat strong { color: #e6c879; font-size: 14px; line-height: 1; }
+  .sl-section-tabs { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:26px; padding:6px; border:1px solid rgba(255,255,255,.08); border-radius:22px; background:rgba(0,0,0,.18); width:fit-content; max-width:100%; }
+  .sl-section-tab { min-height:44px; border:1px solid transparent; border-radius:16px; padding:0 16px; display:inline-flex; align-items:center; justify-content:center; gap:8px; background:rgba(255,255,255,.035); color:#bfb4a3; font-weight:800; cursor:pointer; transition:background .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease; }
+  .sl-section-tab:hover:not(.is-active) { color:#f1e6ce; border-color:rgba(212,182,111,.24); background:rgba(212,182,111,.08); transform:translateY(-1px); }
+  .sl-section-tab:last-child:not(.is-active) { color:#e7c777; border-color:rgba(212,182,111,.18); background:rgba(212,182,111,.065); }
+  .sl-section-tab.is-active { background:linear-gradient(135deg,#e6c879,#a8792f); color:#18130d; box-shadow:0 14px 32px rgba(212,182,111,.2); }
   .sl-search, .sl-paper-search { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; padding: 10px; border-radius: 20px; background: rgba(8,7,5,0.74); border: 1px solid rgba(255,255,255,0.09); }
   .sl-search { margin-top: 24px; }
   .sl-search__icon { margin-left: 8px; color: #c4a464; }
@@ -188,6 +198,7 @@ const STYLES = `
   .sl-checkbox-row input { width:auto !important; margin-top:3px; }
   .sl-filters input { width:100%; border:1px solid rgba(255,255,255,.09); outline:none; background:rgba(0,0,0,.2); color:#eee6d8; font-size:13px; border-radius:12px; padding:9px 10px; }
   @media (max-width: 900px) { .sl-my-dashboard { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  @media (max-width: 640px) { .sl-tabs, .sl-section-tabs { width:100%; } .sl-tab, .sl-section-tab { flex:1 1 150px; } .sl-hero__stats { gap:6px; } }
   @media (max-width: 900px) { .sl-body, .sl-upload-layout { grid-template-columns: 1fr; } .sl-filters { position: static; } }
   @media (max-width: 640px) { .sl-search, .sl-paper-search { grid-template-columns: auto 1fr; } .sl-search__button, .sl-paper-search button { grid-column: 1 / -1; width: 100%; } .sl-modal__grid, .sl-upload-grid { grid-template-columns: 1fr; } .sl-card__footer { align-items: stretch; flex-direction: column; } }
 `;
@@ -208,6 +219,7 @@ const canPublish = (user) =>
 export default function SystemLibraryPage() {
   const { token, user } = useAuth();
   const [activeTab, setActiveTab] = useState("community");
+  const [contentTab, setContentTab] = useState("library");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [filters, setFilters] = useState(emptyFilters);
@@ -502,6 +514,7 @@ export default function SystemLibraryPage() {
           : "Đã upload tài liệu vào Thư viện cộng đồng.",
       );
       setActiveTab("my");
+      setContentTab("library");
       await fetchDocuments();
     } catch (err) {
       setNotice(err.message || "Không thể upload tài liệu.");
@@ -543,6 +556,7 @@ export default function SystemLibraryPage() {
       const result = await api.importInternetPaperToLibrary(paper, token);
       setNotice(result?.document?.duplicate ? "Paper đã tồn tại theo DOI/URL; không tạo bản trùng." : "Đã import paper vào thư viện.");
       setActiveTab("community");
+      setContentTab("library");
       await fetchDocuments();
     } catch (err) {
       setNotice(err.message || "Không thể import paper vào thư viện.");
@@ -633,6 +647,24 @@ export default function SystemLibraryPage() {
           </span>
         </div>
         {activeTab !== "internet" && (
+          <div className="sl-section-tabs" role="tablist" aria-label="Chế độ thư viện">
+            <button
+              type="button"
+              className={`sl-section-tab ${contentTab === "library" ? "is-active" : ""}`}
+              onClick={() => setContentTab("library")}
+            >
+              <Library size={16} /> {activeTab === "my" ? "Thư viện của tôi" : "Thư viện cộng đồng"}
+            </button>
+            <button
+              type="button"
+              className={`sl-section-tab ${contentTab === "upload" ? "is-active" : ""}`}
+              onClick={() => setContentTab("upload")}
+            >
+              <Upload size={16} /> Upload
+            </button>
+          </div>
+        )}
+        {activeTab !== "internet" && contentTab === "library" && (
           <SystemLibrarySearchBar
             value={query}
             onChange={setQuery}
@@ -699,6 +731,7 @@ export default function SystemLibraryPage() {
         </section>
       ) : (
         <>
+          {contentTab === "upload" && (
           <section className="sl-upload-panel" style={{ marginTop: 22 }}>
             <h2>
               <Upload size={20} /> Đóng góp tài liệu cho Thư viện Cộng đồng
@@ -859,8 +892,9 @@ export default function SystemLibraryPage() {
               </aside>
             </div>
           </section>
+          )}
 
-          {activeTab === "my" && (
+          {contentTab === "library" && activeTab === "my" && (
             <section className="sl-my-dashboard" aria-label="Dashboard tài liệu của tôi">
               {[
                 ["Đã public", documents.filter((doc) => doc.review_status === "published").length],
@@ -872,6 +906,7 @@ export default function SystemLibraryPage() {
               ))}
             </section>
           )}
+          {contentTab === "library" && (
           <div className="sl-body">
             <SystemLibraryFilters
               filters={filters}
@@ -979,6 +1014,7 @@ export default function SystemLibraryPage() {
               )}
             </section>
           </div>
+          )}
         </>
       )}
       <SystemDocumentDetailModal

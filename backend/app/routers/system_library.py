@@ -25,6 +25,7 @@ from app.services.system_library_service import (
 )
 from app.services.paper_providers import get_paper_provider
 from app.services.activity_log_service import log_user_activity
+from app.utils.filenames import normalize_upload_filename
 
 router = APIRouter(tags=["system-library"])
 
@@ -161,7 +162,7 @@ async def upload_document(
     user: dict = Depends(get_current_user),
 ):
     contents = await file.read()
-    filename = file.filename or "library-document"
+    filename = normalize_upload_filename(file.filename, "library-document")
     document = await import_community_document_from_upload(
         file_contents=contents,
         filename=filename,

@@ -6,6 +6,7 @@ from app.dependencies import get_current_user
 from pydantic import BaseModel
 
 from app.services.activity_log_service import log_user_activity
+from app.utils.filenames import normalize_upload_filename
 from app.services.system_library_service import (
     delete_system_document,
     import_system_document_from_upload,
@@ -52,7 +53,7 @@ async def import_system_document(
 ):
     require_admin(user)
     contents = await file.read()
-    filename = file.filename or "system-document"
+    filename = normalize_upload_filename(file.filename, "system-document")
     document = await import_system_document_from_upload(
         file_contents=contents,
         filename=filename,

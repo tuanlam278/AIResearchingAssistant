@@ -188,7 +188,7 @@ export const api = {
     unwrapRequest(() => axiosInstance.post("/api/auth/login", { email, password })),
 
   register: (email, password, name) =>
-    unwrapRequest(() => axiosInstance.post("/api/auth/register", { email, password, confirm_password: password, name })),
+    unwrapRequest(() => axiosInstance.post("/api/auth/register", { email, password, confirm_password: password, name, username: name })),
 
   me: (token) =>
     unwrapRequest(() => axiosInstance.get("/api/auth/me", { headers: authHeader(token) })),

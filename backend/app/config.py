@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     MAX_QUESTION_LENGTH: int = 1000
     MAX_CHAT_HISTORY_TURNS: int = 10
 
-    google_client_id: str
-    google_client_secret: str
+    google_client_id: str = ""
+    google_client_secret: str = ""
 
     class Config:
         env_file = ".env"

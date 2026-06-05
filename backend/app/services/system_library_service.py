@@ -107,6 +107,13 @@ SYSTEM_DOCUMENT_COLUMNS = (
     "status_reason, admin_feedback, processing_status, copyright_confirmed, authors, year, venue, open_access_pdf_url, metadata_only"
 )
 
+FALLBACK_SYSTEM_DOCUMENT_COLUMNS = (
+    "id, title, filename, file_type, storage_path, download_url, file_size, mime_type, category, tags, "
+    "summary, page_count, word_count, is_vector_ready, created_by, created_at, updated_at, "
+    "source_type, status, peer_review_status, access_type, review_type, has_pdf, has_code, has_data, "
+    "citation_count, vote_avg, vote_count, download_count, uploader_name, doi, external_url"
+)
+
 
 def _supabase_response_data(resp: Any):
     if isinstance(resp, dict):
@@ -117,6 +124,11 @@ def _supabase_response_data(resp: Any):
 def _is_missing_table_error(exc_or_error: Any) -> bool:
     message = str(exc_or_error or "").lower()
     return any(token in message for token in ["system_documents", "system_document_bookmarks", "does not exist", "not find", "schema cache", "relation"])
+
+
+def _is_missing_column_error(exc_or_error: Any) -> bool:
+    message = str(exc_or_error or "").lower()
+    return any(token in message for token in ["column", "schema cache", "could not find", "does not exist"])
 
 
 def _get_user_id(user: dict) -> str:
@@ -498,7 +510,11 @@ def _display_download_filename(row: dict) -> str:
 
 
 def _storage_object_path(document_id: str, filename: str) -> str:
-    safe_name = re.sub(r"[/\\]+", "-", _safe_filename(filename)).strip(".-") or "system-document"
+    display_name = _safe_filename(filename)
+    ascii_name = _ascii_download_filename(display_name)
+    if "." not in ascii_name.rsplit("/", 1)[-1] and "." in display_name.rsplit("/", 1)[-1]:
+        ascii_name = f"{ascii_name}.{display_name.rsplit('.', 1)[-1]}"
+    safe_name = re.sub(r"[/\\]+", "-", ascii_name).strip(".-") or "system-document"
     return f"system-library/{document_id}/{safe_name}"
 
 
@@ -704,7 +720,6 @@ async def import_system_document_from_upload(
         "vote_avg": 0,
         "vote_count": 0,
         "is_vector_ready": False,
-        "full_text_indexed": False,
         "metadata_only": False,
         "copyright_confirmed": copyright_confirmed,
         "processing_status": processing_status or "embedding",
@@ -714,7 +729,7 @@ async def import_system_document_from_upload(
         resp = supabase.table("system_documents").insert(document_payload).execute()
     except Exception:
         # Backward-compatible fallback until optional metadata columns are applied.
-        for optional_key in ("citation_threshold", "description", "full_text_indexed", "metadata_only", "copyright_confirmed", "processing_status"):
+        for optional_key in ("citation_threshold", "description", "metadata_only", "copyright_confirmed", "processing_status"):
             document_payload.pop(optional_key, None)
         try:
             resp = supabase.table("system_documents").insert(document_payload).execute()
@@ -928,32 +943,42 @@ async def list_or_search_documents(user: dict, query_text: str = "", filters: di
     bookmarked_ids = _query_bookmarked_ids(user_id)
     bookmarked_only = bool(filters.get("bookmarked"))
 
-    try:
-        query = supabase.table("system_documents").select(SYSTEM_DOCUMENT_COLUMNS, count="exact")
+    def build_query(columns: str):
+        query = supabase.table("system_documents").select(columns, count="exact")
         query = _apply_filters(query, filters)
         if my_documents:
             query = query.eq("created_by", user_id)
         if bookmarked_only:
-            if not bookmarked_ids:
-                return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
             query = query.in_("id", list(bookmarked_ids))
         if str(query_text or "").strip():
             term = str(query_text).strip().replace("%", "")
             query = query.or_(f"title.ilike.%{term}%,filename.ilike.%{term}%,summary.ilike.%{term}%,category.ilike.%{term}%")
         query = _apply_sort(query, filters.get("sort"), bool(str(query_text or "").strip()))
-        query = query.range(offset, offset + page_size - 1)
-        resp = query.execute()
+        return query.range(offset, offset + page_size - 1)
+
+    if bookmarked_only and not bookmarked_ids:
+        return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+
+    try:
+        resp = build_query(SYSTEM_DOCUMENT_COLUMNS).execute()
     except Exception as exc:
         if _is_missing_table_error(exc):
             return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
-        logger.exception("List system documents failed")
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"}) from exc
+        if _is_missing_column_error(exc):
+            resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+        else:
+            logger.exception("List system documents failed")
+            raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"}) from exc
 
     rows, error = _supabase_response_data(resp)
     if error:
         if _is_missing_table_error(error):
             return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"})
+        if _is_missing_column_error(error):
+            resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            rows, error = _supabase_response_data(resp)
+        if error:
+            raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"})
 
     rows = rows or []
     semantic_fallback = False
@@ -986,9 +1011,15 @@ def list_admin_documents() -> dict:
     except Exception as exc:
         if _is_missing_table_error(exc):
             return {"documents": [], "total": 0}
-        logger.exception("Admin list system documents failed")
-        raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"}) from exc
+        if _is_missing_column_error(exc):
+            resp = supabase.table("system_documents").select(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).order("created_at", desc=True).limit(200).execute()
+        else:
+            logger.exception("Admin list system documents failed")
+            raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"}) from exc
     rows, error = _supabase_response_data(resp)
+    if error and _is_missing_column_error(error):
+        resp = supabase.table("system_documents").select(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).order("created_at", desc=True).limit(200).execute()
+        rows, error = _supabase_response_data(resp)
     if error:
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải tài liệu hệ thống"})
     documents = [normalize_document(row) for row in rows or []]

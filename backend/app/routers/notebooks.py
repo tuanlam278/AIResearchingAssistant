@@ -16,6 +16,7 @@ from app.services.embedder import embed_chunks
 from app.db.supabase_client import supabase
 from app.config import settings
 from app.services.activity_log_service import log_user_activity
+from app.utils.filenames import normalize_upload_filename
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +285,7 @@ async def upload_documents(
             detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy notebook"},
         )
 
-    incoming_names = [((file.filename or "").strip().lower()) for file in files]
+    incoming_names = [normalize_upload_filename(file.filename, "uploaded-document").strip().lower() for file in files]
     if len(incoming_names) != len(set(incoming_names)):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -348,18 +349,19 @@ async def upload_documents(
 async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int, citation_threshold: float | None = 0, tags: str = "") -> dict:
     """Xử lý 1 file: validate → parse → chunk → embed → insert Supabase."""
 
-    file_type = get_file_type(file.filename)
+    filename = normalize_upload_filename(file.filename, "uploaded-document")
+    file_type = get_file_type(filename)
 
     # Đọc nội dung
     try:
         contents = await file.read()
     except Exception:
-        return {"filename": file.filename, "status": "error", "error": "READ_FAILED"}
+        return {"filename": filename, "status": "error", "error": "READ_FAILED"}
 
     # Validate file size
     if len(contents) > max_size_bytes:
         return {
-            "filename": file.filename,
+            "filename": filename,
             "status": "error",
             "error": "FILE_TOO_LARGE",
             "message": f"File quá lớn. Vui lòng chọn file dưới {max_size_bytes // 1024 // 1024}MB.",
@@ -367,31 +369,31 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
 
     # Parse document
     try:
-        pages, file_type = await parse_document(contents, file.filename)
+        pages, file_type = await parse_document(contents, filename)
         page_count = len(pages)
     except UnsupportedDocumentType as exc:
-        return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "INVALID_FILE_TYPE", "message": str(exc)}
+        return {"filename": filename, "file_type": file_type, "status": "error", "error": "INVALID_FILE_TYPE", "message": str(exc)}
     except EmptyDocumentText as exc:
-        return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": str(exc)}
+        return {"filename": filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": str(exc)}
     except Exception:
-        logger.exception(f"Document parse failed: {file.filename}")
-        return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
+        logger.exception(f"Document parse failed: {filename}")
+        return {"filename": filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
 
     # Chunk
     try:
         chunks = chunk_text(pages)
         chunk_count = len(chunks)
         if chunk_count == 0:
-            return {"filename": file.filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
+            return {"filename": filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
     except Exception:
-        logger.exception(f"Chunking failed: {file.filename}")
-        return {"filename": file.filename, "status": "error", "error": "CHUNK_FAILED"}
+        logger.exception(f"Chunking failed: {filename}")
+        return {"filename": filename, "status": "error", "error": "CHUNK_FAILED"}
 
     # Insert document metadata
     try:
         document_payload = {
             "notebook_id": notebook_id,
-            "filename": file.filename,
+            "filename": filename,
             "file_type": file_type,
             "page_count": page_count,
             "chunk_count": chunk_count,
@@ -413,12 +415,12 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             document_payload.pop("tags", None)
             resp = supabase.table("documents").insert(document_payload).execute()
     except Exception:
-        logger.exception(f"Insert document failed: {file.filename}")
-        return {"filename": file.filename, "status": "error", "error": "DB_INSERT_FAILED"}
+        logger.exception(f"Insert document failed: {filename}")
+        return {"filename": filename, "status": "error", "error": "DB_INSERT_FAILED"}
 
     data, error = _supabase_response_data(resp)
     if error or not data:
-        return {"filename": file.filename, "status": "error", "error": "DB_INSERT_FAILED"}
+        return {"filename": filename, "status": "error", "error": "DB_INSERT_FAILED"}
 
     doc_id = data[0]["id"]
     created_at = data[0]["created_at"]
@@ -428,9 +430,9 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
         texts = [c["content"] for c in chunks]
         embeddings = await embed_chunks(texts)
     except Exception:
-        logger.exception(f"Embedding failed: {file.filename}")
+        logger.exception(f"Embedding failed: {filename}")
         supabase.table("documents").delete().eq("id", doc_id).execute()
-        return {"filename": file.filename, "status": "error", "error": "EMBED_FAILED"}
+        return {"filename": filename, "status": "error", "error": "EMBED_FAILED"}
 
     # Insert chunks + embeddings
     try:
@@ -448,12 +450,12 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
         ]
         supabase.table("document_chunks").insert(chunk_rows).execute()
     except Exception:
-        logger.exception(f"Insert chunks failed: {file.filename}")
+        logger.exception(f"Insert chunks failed: {filename}")
         supabase.table("documents").delete().eq("id", doc_id).execute()
-        return {"filename": file.filename, "status": "error", "error": "CHUNK_INSERT_FAILED"}
+        return {"filename": filename, "status": "error", "error": "CHUNK_INSERT_FAILED"}
 
     return {
-        "filename": file.filename,
+        "filename": filename,
         "doc_id": doc_id,
         "id": doc_id,
         "file_type": file_type,
