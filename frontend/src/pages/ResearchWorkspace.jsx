@@ -15,6 +15,8 @@ const RIGHT_WIDTH_KEY = "notebookWorkspaceRightWidth";
 const RIGHT_TAB_KEY = "notebookWorkspaceRightTab";
 const LEFT_TAB_KEY = "notebookWorkspaceLeftTab";
 const LAST_SESSION_KEY = "researchWorkspace:lastActiveSessionId";
+const STREAM_TYPEWRITER_INTERVAL_MS = Math.max(0, Number(import.meta.env.VITE_STREAM_TYPEWRITER_INTERVAL_MS || 28));
+const STREAM_TYPEWRITER_CHARS_PER_TICK = Math.max(1, Number(import.meta.env.VITE_STREAM_TYPEWRITER_CHARS_PER_TICK || 3));
 
 const PROMPT_GROUPS = [
   { group: "Hiểu tài liệu", prompts: ["Tóm tắt ý chính của tài liệu đã chọn", "Liệt kê luận điểm chính kèm nguồn", "Giải thích thuật ngữ quan trọng"] },
@@ -35,6 +37,8 @@ function useStored(key, initial, parser = (value) => value) {
   return [value, setValue];
 }
 
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
 function normalizeDocument(doc = {}) {
   const id = String(doc.id || doc.doc_id || "");
   const rawStatus = doc.processing_status || doc.status || (doc.chunk_count ? "ready" : "uploaded");
@@ -48,6 +52,8 @@ function normalizeDocument(doc = {}) {
     file_type: doc.file_type || "file",
     processing_status: isReady ? "ready" : status,
     processing_error: doc.processing_error || doc.error || doc.message || null,
+    indexing_job_id: doc.indexing_job_id || doc.indexingJobId || doc.indexing_job?.id || null,
+    indexing_progress: Number(doc.indexing_progress ?? doc.indexing_job?.progress ?? (isReady ? 100 : 0)),
     is_vector_ready: isReady,
     chunk_count: Number(doc.chunk_count || 0),
     page_count: Number(doc.page_count || 0),
@@ -189,7 +195,7 @@ function DocumentsPanel({ documents, selectedDocumentIds, onToggleDocument, onSe
           const ready = doc.processing_status === "ready";
           const failed = doc.processing_status === "failed";
           const stepIndex = Math.max(1, ["uploaded", "parsing", "chunking", "embedding", "ready"].indexOf(doc.processing_status) + 1);
-          const percent = ready ? 100 : failed ? 100 : Math.round((stepIndex / 5) * 100);
+          const percent = ready ? 100 : failed ? 100 : Math.max(Number(doc.indexing_progress || 0), Math.round((stepIndex / 5) * 100));
           return <div key={doc.id} className="rw-doc">
             <div className="rw-doc-top"><input type="checkbox" checked={selectedDocumentIds.includes(doc.id)} disabled={!ready} onChange={() => onToggleDocument(doc.id)} aria-label={`Chọn tài liệu ${doc.filename}`} title={ready ? "Cập nhật ngay tài liệu tham chiếu của phiên hiện tại" : "Tài liệu chưa sẵn sàng"} /><div style={{ flex: 1 }}><div className="rw-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}><div className="rw-doc-title">{doc.filename}</div><button className="rw-icon-btn rw-danger" type="button" aria-label={`Xóa tài liệu ${doc.filename}`} title="Xóa tài liệu khỏi notebook" onClick={() => onDeleteDocument(doc)}>🗑</button></div><div className="rw-meta"><span>{doc.file_type}</span><span>{doc.page_count} trang</span><span>{doc.chunk_count} chunks</span><span>{doc.is_vector_ready ? "Vector ready" : "Vector chưa sẵn sàng"}</span></div></div></div>
             <div className="rw-status-line"><div className="rw-status-fill" style={{ width: `${percent}%`, background: failed ? "#d86b5e" : undefined }} /></div>
@@ -426,6 +432,11 @@ export default function ResearchWorkspace() {
   };
   const loadNotebookName = async () => { try { const result = await api.getNotebooks(token); const item = (result?.notebooks || []).find((n) => String(n.notebook_id) === String(notebookId)); if (item?.name) setNotebookName(item.name); } catch {} };
   useEffect(() => { loadNotebookName(); loadDocuments(); loadSessions(); return () => requestRef.current?.abort?.(); }, [token, notebookId]);
+  useEffect(() => {
+    if (!documents.some((doc) => !["ready", "failed"].includes(doc.processing_status))) return undefined;
+    const id = setInterval(() => { loadDocuments(); }, 2500);
+    return () => clearInterval(id);
+  }, [documents, token, notebookId]);
 
   const createSession = async () => { if (!selectedDocumentIds.length) return showToast("error", "Chọn ít nhất một tài liệu ready."); try { const result = await api.createResearchSession(notebookId, selectedDocumentIds, token); const session = result?.session; setSessions((prev) => [session, ...prev].filter(Boolean)); setMessages([]); setCurrentCitations([]); setDiagnostics(null); await openSession(session, false); showToast("success", "Đã tạo phiên mới."); } catch (err) { showToast("error", err.message || "Không thể tạo phiên."); } };
   const updateActiveSessionDocuments = async (nextIds) => {
@@ -434,6 +445,26 @@ export default function ResearchWorkspace() {
     try { const result = await api.updateResearchSession(activeSession.id, { selected_document_ids: nextIds }, token); const session = result?.session || { ...activeSession, selected_document_ids: nextIds }; setActiveSession(session); setSessions((prev) => prev.map((s) => s.id === session.id ? session : s)); showToast("success", "Đã cập nhật tài liệu tham chiếu của phiên."); } catch (err) { showToast("error", err.message || "Không thể cập nhật tài liệu phiên."); }
   };
   const toggleDocument = (docId) => { const next = selectedDocumentIds.includes(docId) ? selectedDocumentIds.filter((id) => id !== docId) : [...selectedDocumentIds, docId]; updateActiveSessionDocuments(next); };
+  const subscribeIndexingJob = (jobId) => {
+    if (!jobId || !token) return;
+    api.streamIndexingJob(jobId, token, {
+      onProgress: (job) => {
+        const docId = String(job.document_id || job.resource_id || "");
+        setDocuments((prev) => prev.map((doc) => doc.id === docId ? {
+          ...doc,
+          indexing_job_id: job.id || jobId,
+          indexing_progress: Number(job.progress || 0),
+          processing_status: job.status === "succeeded" ? "ready" : (job.stage || doc.processing_status),
+          status: job.status === "succeeded" ? "ready" : doc.status,
+          processing_error: job.error_message || doc.processing_error,
+          is_vector_ready: job.status === "succeeded" ? true : doc.is_vector_ready,
+        } : doc));
+      },
+      onDone: () => loadDocuments(),
+      onError: () => loadDocuments(),
+    }).catch(() => loadDocuments());
+  };
+
   const deleteDocument = async (doc) => {
     if (!doc?.id) return;
     if (!window.confirm(`Xóa tài liệu "${doc.filename}" khỏi notebook?`)) return;
@@ -449,18 +480,112 @@ export default function ResearchWorkspace() {
   };
   const handleUpload = async (files) => {
     setUploadError(""); const valid = files.filter((file) => { const ext = file.name.split(".").pop()?.toLowerCase(); if (!EXTENSIONS.has(ext)) { setUploadError(`Không hỗ trợ ${file.name}`); return false; } if (file.size > MAX_UPLOAD_BYTES) { setUploadError(`${file.name} vượt quá ${MAX_UPLOAD_MB}MB`); return false; } return true; }); if (!valid.length) return;
-    setUploadProgress(1); try { const result = await api.uploadDocuments(notebookId, valid, token, setUploadProgress); const uploaded = (result?.uploaded || []).map(normalizeDocument); showToast("success", "Upload hoàn tất."); await loadDocuments(); if (activeSession?.id && uploaded.length) { const next = [...new Set([...selectedDocumentIds, ...uploaded.filter((d) => d.processing_status === "ready").map((d) => d.id)])]; await updateActiveSessionDocuments(next); } } catch (err) { setUploadError(err.message || "Upload thất bại."); } finally { setTimeout(() => setUploadProgress(0), 800); }
+    setUploadProgress(1); try { const result = await api.uploadDocuments(notebookId, valid, token, setUploadProgress); const uploaded = (result?.uploaded || []).map(normalizeDocument); const queued = (result?.queued || []).map(normalizeDocument); queued.forEach((doc) => subscribeIndexingJob(doc.indexing_job_id || doc.indexing_job?.id)); showToast("success", queued.length ? "Upload xong, tài liệu đang được index nền." : "Upload hoàn tất."); await loadDocuments(); if (activeSession?.id && uploaded.length) { const next = [...new Set([...selectedDocumentIds, ...uploaded.filter((d) => d.processing_status === "ready").map((d) => d.id)])]; await updateActiveSessionDocuments(next); } } catch (err) { setUploadError(err.message || "Upload thất bại."); } finally { setTimeout(() => setUploadProgress(0), 800); }
   };
   const searchLibrary = async () => { setLibraryLoading(true); try { const result = await api.listSystemLibraryDocuments({ q: libraryQuery, search: libraryQuery, limit: 12 }, token); setLibraryResults(result?.documents || result?.items || []); } catch (err) { showToast("error", err.message || "Không thể tìm thư viện."); } finally { setLibraryLoading(false); } };
   const linkLibraryDocument = async (id) => { try { await api.linkSystemDocumentToNotebook(notebookId, id, token); setLibraryOpen(false); showToast("success", "Đã link tài liệu từ thư viện."); await loadDocuments(); } catch (err) { showToast("error", err.message || "Không thể link tài liệu."); } };
 
   const startChat = async ({ question, regenerateIndex = null }) => {
-    if (!question.trim() || loading) return; if (!activeSession) return showToast("error", "Hãy tạo hoặc mở phiên nghiên cứu trước."); if (!selectedDocumentIds.length) return showToast("error", "Chọn ít nhất một tài liệu.");
-    const controller = new AbortController(); requestRef.current = controller; const userMessage = regenerateIndex == null ? { id: crypto.randomUUID?.() || `${Date.now()}-user`, role: "user", content: question } : null; const assistantId = crypto.randomUUID?.() || `${Date.now()}-assistant`;
-    setInput(""); setLoading(true); setLoadingLabel("Đang truy xuất nguồn…"); setDiagnostics(null); setInvalidCitationCount(0); if (userMessage) setMessages((prev) => [...prev, userMessage]); else setMessages((prev) => prev.map((m, i) => i === regenerateIndex ? { ...m, content: "", citations: [], streaming: true } : m));
-    let full = ""; let streamCitations = []; let streamWarning = null; let streamDiagnostics = null; const history = messages.filter((m, i) => regenerateIndex == null || i < regenerateIndex).filter((m) => m.role !== "system").map(({ role, content }) => ({ role, content }));
-    try { await api.streamResearchQuery({ notebookId, question, chatHistory: history, selectedDocumentIds, researchSessionId: activeSession.id, citationThreshold: retrievalMode === "strict" ? 0.45 : 0 }, token, { onStatus: (_s, msg) => setLoadingLabel(msg || "Đang xử lý…"), onSources: (sources) => { streamCitations = normalizeCitations(sources); setCurrentCitations(streamCitations); setInvalidCitationCount(Math.max(0, (Array.isArray(sources) ? sources.length : 0) - streamCitations.length)); setRightTab("sources"); }, onDiagnostics: (diag) => { streamDiagnostics = diag; setDiagnostics(diag); }, onWarning: (warning) => { streamWarning = warning; }, onToken: (chunk) => { full += chunk; const partial = { id: assistantId, role: "assistant", content: full, citations: streamCitations, warning: streamWarning, retrieval_diagnostics: streamDiagnostics, streaming: true }; setMessages((prev) => regenerateIndex == null ? [...prev.filter((m) => m.id !== assistantId), partial] : prev.map((m, i) => i === regenerateIndex ? partial : m)); } }, { signal: controller.signal }); setLoadingLabel("Đang lưu phiên…"); const finalMsg = { id: assistantId, role: "assistant", content: full, citations: streamCitations, warning: streamWarning, retrieval_diagnostics: streamDiagnostics || buildDiagnostics(streamCitations) }; setMessages((prev) => regenerateIndex == null ? [...prev.filter((m) => m.id !== assistantId), finalMsg] : prev.map((m, i) => i === regenerateIndex ? finalMsg : m)); setDiagnostics(finalMsg.retrieval_diagnostics); setCurrentCitations(streamCitations); } catch (err) { showToast("error", err.message || "Không thể gọi RAG."); } finally { setLoading(false); setLoadingLabel(""); requestRef.current = null; }
+    if (!question.trim() || loading) return;
+    if (!activeSession) return showToast("error", "Hãy tạo hoặc mở phiên nghiên cứu trước.");
+    if (!selectedDocumentIds.length) return showToast("error", "Chọn ít nhất một tài liệu.");
+
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const userMessage = regenerateIndex == null ? { id: crypto.randomUUID?.() || `${Date.now()}-user`, role: "user", content: question } : null;
+    const assistantId = crypto.randomUUID?.() || `${Date.now()}-assistant`;
+
+    setInput("");
+    setLoading(true);
+    setLoadingLabel("Đang truy xuất nguồn…");
+    setDiagnostics(null);
+    setInvalidCitationCount(0);
+    if (userMessage) setMessages((prev) => [...prev, userMessage]);
+    else setMessages((prev) => prev.map((m, i) => i === regenerateIndex ? { ...m, content: "", citations: [], streaming: true } : m));
+
+    let full = "";
+    let displayed = "";
+    let streamCitations = [];
+    let streamWarning = null;
+    let streamDiagnostics = null;
+    let renderCancelled = false;
+    let renderChain = Promise.resolve();
+    const history = messages
+      .filter((m, i) => regenerateIndex == null || i < regenerateIndex)
+      .filter((m) => m.role !== "system")
+      .map(({ role, content }) => ({ role, content }));
+
+    const updateAssistantMessage = (content, streaming = true) => {
+      const partial = {
+        id: assistantId,
+        role: "assistant",
+        content,
+        citations: streamCitations,
+        warning: streamWarning,
+        retrieval_diagnostics: streamDiagnostics,
+        streaming,
+      };
+      setMessages((prev) => regenerateIndex == null
+        ? [...prev.filter((m) => m.id !== assistantId), partial]
+        : prev.map((m, i) => i === regenerateIndex ? partial : m));
+    };
+
+    const enqueueTypewriterChunk = (chunk) => {
+      full += chunk;
+      renderChain = renderChain.then(async () => {
+        for (let index = 0; index < chunk.length; index += STREAM_TYPEWRITER_CHARS_PER_TICK) {
+          if (renderCancelled || controller.signal.aborted) return;
+          displayed += chunk.slice(index, index + STREAM_TYPEWRITER_CHARS_PER_TICK);
+          updateAssistantMessage(displayed, true);
+          if (STREAM_TYPEWRITER_INTERVAL_MS > 0) await sleep(STREAM_TYPEWRITER_INTERVAL_MS);
+        }
+      });
+    };
+
+    try {
+      await api.streamResearchQuery(
+        { notebookId, question, chatHistory: history, selectedDocumentIds, researchSessionId: activeSession.id, citationThreshold: retrievalMode === "strict" ? 0.45 : 0 },
+        token,
+        {
+          onStatus: (_s, msg) => setLoadingLabel(msg || "Đang xử lý…"),
+          onSources: (sources) => {
+            streamCitations = normalizeCitations(sources);
+            setCurrentCitations(streamCitations);
+            setInvalidCitationCount(Math.max(0, (Array.isArray(sources) ? sources.length : 0) - streamCitations.length));
+            setRightTab("sources");
+          },
+          onDiagnostics: (diag) => { streamDiagnostics = diag; setDiagnostics(diag); },
+          onWarning: (warning) => { streamWarning = warning; },
+          onToken: enqueueTypewriterChunk,
+        },
+        { signal: controller.signal }
+      );
+      await renderChain;
+      setLoadingLabel("Đang lưu phiên…");
+      const finalMsg = {
+        id: assistantId,
+        role: "assistant",
+        content: full,
+        citations: streamCitations,
+        warning: streamWarning,
+        retrieval_diagnostics: streamDiagnostics || buildDiagnostics(streamCitations),
+      };
+      setMessages((prev) => regenerateIndex == null
+        ? [...prev.filter((m) => m.id !== assistantId), finalMsg]
+        : prev.map((m, i) => i === regenerateIndex ? finalMsg : m));
+      setDiagnostics(finalMsg.retrieval_diagnostics);
+      setCurrentCitations(streamCitations);
+    } catch (err) {
+      renderCancelled = true;
+      showToast("error", err.message || "Không thể gọi RAG.");
+    } finally {
+      renderCancelled = true;
+      setLoading(false);
+      setLoadingLabel("");
+      requestRef.current = null;
+    }
   };
+
   const handleSubmit = () => startChat({ question: input });
   const handleRegenerate = (idx) => { const user = [...messages].slice(0, idx).reverse().find((m) => m.role === "user"); if (!user) return showToast("error", "Không tìm thấy câu hỏi trước đó."); startChat({ question: user.content, regenerateIndex: idx }); };
   const showSources = (citation) => { if (citation && !currentCitations.length) setCurrentCitations([citation]); setRightTab("sources"); setMobileTab("sources"); };
@@ -500,8 +625,48 @@ export default function ResearchWorkspace() {
       setSavingStudyNote(false);
     }
   };
-  const generateFlashcards = async () => { if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn."); setQuickLoading(true); try { const result = await api.generateFlashcards(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(flashcardCount, 5)) }, token); setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards: (result?.flashcards || []).slice(0, 5), warning: result?.warning }); } catch (err) { showToast("error", err.message || "Không thể tạo flashcard."); } finally { setQuickLoading(false); } };
-  const generateQuiz = async () => { if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn."); setQuickLoading(true); try { const result = await api.generateQuiz(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(quizCount, 5)), question_type: "multiple_choice" }, token); setQuizModal({ title: "Quiz từ tài liệu", questions: (result?.quiz?.questions || result?.questions || []).slice(0, 5), warning: result?.warning }); } catch (err) { showToast("error", err.message || "Không thể tạo quiz."); } finally { setQuickLoading(false); } };
+  const waitForGenerationJob = async (jobId, fallbackError) => new Promise((resolve, reject) => {
+    if (!jobId) return reject(new Error(fallbackError));
+    api.streamGenerationJob(jobId, token, {
+      onProgress: (job) => setLoadingLabel(job?.error_message || job?.stage || "Đang tạo nội dung học tập…"),
+      onDone: (event) => {
+        const job = event?.job || {};
+        if (job.status === "failed") reject(new Error(job.error_message || fallbackError));
+        else resolve(job.result || {});
+      },
+      onError: (message) => reject(new Error(message || fallbackError)),
+    }).catch(reject);
+  });
+  const generateFlashcards = async () => {
+    if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn.");
+    setQuickLoading(true);
+    setLoadingLabel("Đang xếp hàng tạo flashcards…");
+    try {
+      const queued = await api.generateFlashcards(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(flashcardCount, 5)) }, token);
+      const result = await waitForGenerationJob(queued?.job_id || queued?.job?.id, "Không thể tạo flashcard.");
+      setFlashcardModal({ title: "Flashcards từ tài liệu", flashcards: (result?.flashcards || []).slice(0, 5), warning: result?.warning });
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo flashcard.");
+    } finally {
+      setQuickLoading(false);
+      setLoadingLabel("");
+    }
+  };
+  const generateQuiz = async () => {
+    if (!activeSession?.id || !selectedDocumentIds.length) return showToast("error", "Cần phiên và tài liệu đã chọn.");
+    setQuickLoading(true);
+    setLoadingLabel("Đang xếp hàng tạo quiz…");
+    try {
+      const queued = await api.generateQuiz(activeSession.id, { selected_document_ids: selectedDocumentIds, count: Math.max(1, Math.min(quizCount, 5)), question_type: "multiple_choice" }, token);
+      const result = await waitForGenerationJob(queued?.job_id || queued?.job?.id, "Không thể tạo quiz.");
+      setQuizModal({ title: "Quiz từ tài liệu", questions: (result?.quiz?.questions || result?.questions || []).slice(0, 5), warning: result?.warning });
+    } catch (err) {
+      showToast("error", err.message || "Không thể tạo quiz.");
+    } finally {
+      setQuickLoading(false);
+      setLoadingLabel("");
+    }
+  };
   const resize = (side, event) => { const startX = event.clientX; const start = side === "left" ? leftWidth : rightWidth; const set = side === "left" ? setLeftWidth : setRightWidth; const onMove = (e) => set(Math.min(side === "left" ? 520 : 560, Math.max(side === "left" ? 260 : 300, side === "left" ? start + e.clientX - startX : start - (e.clientX - startX)))); const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }; document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp); };
 
   return <div className="rw-page"><Styles /><div className="rw-topbar"><div className="rw-row"><button className="rw-soft-btn" type="button" onClick={() => navigate("/notebook")}>← Quay lại Notebook</button><div className="rw-title"><h1>Research Workspace · {notebookName}</h1><p>Tạo notebook vẫn ở trang danh sách; khi vào notebook sẽ làm việc trong workspace này.</p></div></div><div className="rw-row"><button className="rw-soft-btn" type="button" aria-label="Ẩn hiện panel trái" onClick={() => setLeftCollapsed(!leftCollapsed)}>{leftCollapsed ? "Mở Tài liệu" : "Ẩn Tài liệu"}</button><button className="rw-soft-btn" type="button" aria-label="Ẩn hiện panel phải" onClick={() => setRightCollapsed(!rightCollapsed)}>{rightCollapsed ? "Mở Ghi chú/Nguồn" : "Ẩn Ghi chú/Nguồn"}</button></div></div><div className="rw-mobile-tabs">{[["documents", "Tài liệu"], ["chat", "Chat"], ["notes", "Ghi chú"], ["sources", "Nguồn"]].map(([key, label]) => <button key={key} type="button" className={mobileTab === key ? "active" : ""} onClick={() => { setMobileTab(key); if (["notes", "sources"].includes(key)) setRightTab(key); }}>{label}</button>)}</div><div className="rw-shell">

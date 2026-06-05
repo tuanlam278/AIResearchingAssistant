@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.db.supabase_client import supabase
 from app.dependencies import get_current_user
-from app.services.llm import generate_workspace_summary
+from app.services.generation_jobs import create_generation_job
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["workspaces"])
@@ -134,6 +134,23 @@ def _load_document_chunks(workspace_id: str, doc_ids: list[str]) -> dict[str, li
     return grouped
 
 
+
+def _load_document_intelligence(workspace_id: str) -> dict[str, dict]:
+    try:
+        resp = (
+            supabase.table("document_intelligence")
+            .select("document_id, summary, outline, section_summaries, key_terms, citation_candidates")
+            .eq("notebook_id", workspace_id)
+            .execute()
+        )
+        rows, error = _supabase_response_data(resp)
+        if error:
+            return {}
+        return {str(row.get("document_id")): row for row in rows or []}
+    except Exception:
+        return {}
+
+
 @router.get("/{workspace_id}/documents/summary", response_model=dict)
 async def get_workspace_documents_summary(
     workspace_id: str,
@@ -142,22 +159,33 @@ async def get_workspace_documents_summary(
     user_id = _get_user_id(user)
     _ensure_workspace_owner(workspace_id, user_id)
     documents = [_normalize_document(row) for row in _list_workspace_documents(workspace_id)]
+    intelligence = _load_document_intelligence(workspace_id)
+    enriched = []
+    all_terms = []
+    for doc in documents:
+        item = intelligence.get(str(doc.get("id"))) or {}
+        terms = item.get("key_terms") or []
+        all_terms.extend(terms)
+        enriched.append(
+            {
+                **doc,
+                "summary": item.get("summary") or "",
+                "outline": item.get("outline") or [],
+                "section_summaries": item.get("section_summaries") or [],
+                "key_points": terms[:5],
+                "key_terms": terms,
+                "citation_candidates": item.get("citation_candidates") or [],
+                "suggested_questions": [f"Giải thích thêm về {term}?" for term in terms[:3]],
+            }
+        )
 
     return {
         "success": True,
         "data": {
-            "documents": [
-                {
-                    **doc,
-                    "summary": "",
-                    "key_points": [],
-                    "suggested_questions": [],
-                }
-                for doc in documents
-            ],
-            "overall_summary": "",
-            "overall_key_points": [],
-            "suggested_questions": [],
+            "documents": enriched,
+            "overall_summary": "" if not enriched else "Workspace đã có metadata tóm tắt sơ bộ từ quá trình index.",
+            "overall_key_points": list(dict.fromkeys(all_terms))[:8],
+            "suggested_questions": [f"Các tài liệu nói gì về {term}?" for term in list(dict.fromkeys(all_terms))[:5]],
         },
     }
 
@@ -178,50 +206,11 @@ async def generate_workspace_documents_summary(
             detail={"code": "DOC_NOT_FOUND", "message": "Không tìm thấy tài liệu để tóm tắt"},
         )
 
-    doc_ids = [row["id"] for row in document_rows]
-    chunks_by_doc = _load_document_chunks(workspace_id, doc_ids)
-    documents_for_llm = []
-    for row in document_rows:
-        documents_for_llm.append(
-            {
-                "id": row["id"],
-                "filename": row.get("filename"),
-                "page_count": row.get("page_count") or 0,
-                "chunk_count": row.get("chunk_count") or 0,
-                "chunks": chunks_by_doc.get(row["id"], []),
-            }
-        )
-
-    try:
-        generated = await generate_workspace_summary(documents_for_llm)
-    except RuntimeError as exc:
-        logger.exception("Summary generation failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "SUMMARY_FAILED", "message": str(exc)},
-        )
-
-    generated_docs = {str(doc.get("id")): doc for doc in generated.get("documents", [])}
-    documents = []
-    for row in document_rows:
-        base = _normalize_document(row)
-        generated_doc = generated_docs.get(str(row["id"]), {})
-        documents.append(
-            {
-                **base,
-                "title": generated_doc.get("title") or base["title"],
-                "summary": generated_doc.get("summary") or "",
-                "key_points": generated_doc.get("key_points") or [],
-                "suggested_questions": generated_doc.get("suggested_questions") or [],
-            }
-        )
-
-    return {
-        "success": True,
-        "data": {
-            "documents": documents,
-            "overall_summary": generated.get("overall_summary") or "",
-            "overall_key_points": generated.get("overall_key_points") or [],
-            "suggested_questions": generated.get("suggested_questions") or [],
-        },
-    }
+    doc_ids = [str(row["id"]) for row in document_rows]
+    job = await create_generation_job(
+        job_type="workspace_summary",
+        resource_id=workspace_id,
+        user_id=user_id,
+        payload={"workspace_id": workspace_id, "document_ids": doc_ids},
+    )
+    return {"success": True, "data": {"job_id": job.get("id"), "job": job}}

@@ -210,7 +210,7 @@ async def ask(
     warning = _warning_for_scope(retrieval.is_out_of_scope)
 
     citations = _build_citations(chunks)
-    retrieval_diagnostics = _build_retrieval_diagnostics(retrieval, citations, selected_document_ids)
+    retrieval_diagnostics = _build_retrieval_diagnostics(retrieval, citations, selected_document_ids, mode="hierarchical")
 
     # 3. Generate answer
     try:
@@ -273,7 +273,7 @@ async def ask_stream(
             warning = _warning_for_scope(retrieval.is_out_of_scope)
 
             citations = _build_citations(chunks)
-            retrieval_diagnostics = _build_retrieval_diagnostics(retrieval, citations, selected_document_ids)
+            retrieval_diagnostics = _build_retrieval_diagnostics(retrieval, citations, selected_document_ids, mode="hierarchical")
             yield _sse({"type": "sources", "sources": citations, "citations": citations})
             yield _sse({"type": "retrieval_diagnostics", "retrieval_diagnostics": retrieval_diagnostics})
             if warning:

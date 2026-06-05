@@ -29,10 +29,23 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 50
 
+    # Indexing
+    BACKGROUND_INDEXING_ENABLED: bool = True
+    INDEX_INSERT_BATCH_SIZE: int = 250
+    EMBEDDING_CONCURRENCY: int = 2
+    INDEXING_STORAGE_BUCKET: str = "document-uploads"
+    INDEXING_WORKER_ENABLED: bool = True
+    GENERATION_WORKER_ENABLED: bool = True
+
     # Retrieval
     TOP_K_CHUNKS: int = 5
     MIN_SIMILARITY: float = 0.5
     RAG_RELEVANCE_THRESHOLD: float = 0.35
+    RAG_CANDIDATE_MULTIPLIER: int = 8
+    RAG_MAX_CONTEXT_CHUNKS: int = 8
+    RAG_ENABLE_NEIGHBOR_CONTEXT: bool = True
+    MAX_PROMPT_TOKENS: int = 12000
+    RESERVED_HISTORY_TOKENS: int = 1500
 
     # System Library admin upload account. Override these in production.
     SYSTEM_LIBRARY_ADMIN_EMAIL: str = "admin"

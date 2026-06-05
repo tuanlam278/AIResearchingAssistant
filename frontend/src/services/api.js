@@ -168,6 +168,8 @@ async function readSseStream(response, callbacks = {}) {
         if (event.type === "warning") callbacks.onWarning?.(event.warning || event.message || "");
         if (event.type === "suggested_prompts") callbacks.onSuggestedPrompts?.(event.suggested_prompts || []);
         if (event.type === "token") callbacks.onToken?.(event.content || "");
+        if (event.type === "indexing_progress") callbacks.onProgress?.(event.job || event, event);
+        if (event.type === "generation_progress") callbacks.onProgress?.(event.job || event, event);
         if (event.type === "done") {
           if (event.retrieval_diagnostics || event.diagnostics) callbacks.onDiagnostics?.(event.retrieval_diagnostics || event.diagnostics);
           if (event.warning) callbacks.onWarning?.(event.warning);
@@ -307,6 +309,33 @@ export const api = {
     );
   },
 
+
+  getIndexingJob: (jobId, token) =>
+    unwrapRequest(() => axiosInstance.get(`/api/indexing-jobs/${jobId}`, { headers: authHeader(token) })),
+
+  streamIndexingJob: async (jobId, token, callbacks = {}, options = {}) => {
+    try {
+      const response = await fetchWithTimeout(`${BASE_URL}/api/indexing-jobs/${jobId}/stream`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: options.signal,
+      }, options.timeoutMs || REQUEST_TIMEOUTS.chat);
+
+      if (!response.ok) {
+        let message = "Indexing stream request failed";
+        try {
+          const body = await response.json();
+          message = body?.detail?.message || body?.error?.message || message;
+        } catch {}
+        throw new Error(message);
+      }
+
+      await readSseStream(response, callbacks);
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
+
   linkSystemDocumentToNotebook: (notebookId, systemDocumentId, token) =>
     unwrapRequest(() =>
       axiosInstance.post(
@@ -413,6 +442,30 @@ export const api = {
     unwrapRequest(() =>
       axiosInstance.post(`/api/research-sessions/${sessionId}/quizzes/generate`, payload, { headers: authHeader(token) })
     ),
+
+  getGenerationJob: (jobId, token) =>
+    unwrapRequest(() => axiosInstance.get(`/api/generation-jobs/${jobId}`, { headers: authHeader(token) })),
+
+  streamGenerationJob: async (jobId, token, callbacks = {}, options = {}) => {
+    try {
+      const response = await fetchWithTimeout(`${BASE_URL}/api/generation-jobs/${jobId}/stream`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: options.signal,
+      }, options.timeoutMs || REQUEST_TIMEOUTS.chat);
+      if (!response.ok) {
+        let message = "Generation stream request failed";
+        try {
+          const body = await response.json();
+          message = body?.detail?.message || body?.error?.message || message;
+        } catch {}
+        throw new Error(message);
+      }
+      await readSseStream(response, callbacks);
+    } catch (err) {
+      throw normalizeError(err);
+    }
+  },
 
   generateTest: (sessionId, payload, token) =>
     unwrapRequest(() =>
@@ -560,10 +613,6 @@ export const api = {
   deleteAdminSystemDocument: (documentId, token) =>
     unwrapRequest(() => axiosInstance.delete(`/api/admin/system-library/documents/${documentId}`, { headers: authHeader(token) })),
 
-  linkSystemDocumentToNotebook: (notebookId, systemDocumentId, token) =>
-    unwrapRequest(() =>
-      axiosInstance.post(`/api/notebooks/${notebookId}/system-documents`, { system_document_id: systemDocumentId }, { headers: authHeader(token) })
-    ),
 
   // ── CROSS ANALYSIS ──────────────────────────────────────────────────────
   uploadCrossAnalysisDocument: (file, token, onProgress) => {

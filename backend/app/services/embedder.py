@@ -20,6 +20,7 @@ EMBEDDING_DIMENSIONS = 768  # Phải khớp với schema Supabase: VECTOR(768)
 BATCH_SIZE = 100             # Giới hạn của Gemini Embedding API
 RATE_LIMIT_SLEEP = 1         # Giây chờ giữa các batch (tránh 429)
 MAX_RETRIES = 3              # Số lần retry khi gặp lỗi tạm thời
+EMBEDDING_CONCURRENCY = max(1, int(getattr(settings, "EMBEDDING_CONCURRENCY", 1) or 1))
 
 
 def _embed_batch_with_retry(
@@ -100,25 +101,31 @@ async def embed_chunks(texts: List[str]) -> List[List[float]]:
     if not texts:
         return []
 
-    all_embeddings: List[List[float]] = []
     total = len(texts)
+    batches = [(i, texts[i : i + BATCH_SIZE]) for i in range(0, total, BATCH_SIZE)]
+    total_batches = len(batches)
+    semaphore = asyncio.Semaphore(EMBEDDING_CONCURRENCY)
 
-    for i in range(0, total, BATCH_SIZE):
-        batch = texts[i : i + BATCH_SIZE]
-        batch_num = i // BATCH_SIZE + 1
-        total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
+    async def _embed_indexed_batch(batch_index: int, batch: List[str]) -> tuple[int, List[List[float]]]:
+        async with semaphore:
+            logger.info(
+                "Embedding batch %s/%s (%s chunks, concurrency=%s)...",
+                batch_index + 1,
+                total_batches,
+                len(batch),
+                EMBEDDING_CONCURRENCY,
+            )
+            result = await asyncio.to_thread(_embed_batch_with_retry, batch, "RETRIEVAL_DOCUMENT")
+            if RATE_LIMIT_SLEEP and batch_index + 1 < total_batches and EMBEDDING_CONCURRENCY == 1:
+                logger.info("Chờ %ss trước batch tiếp theo...", RATE_LIMIT_SLEEP)
+                await asyncio.sleep(RATE_LIMIT_SLEEP)
+            return batch_index, result
 
-        logger.info(f"Embedding batch {batch_num}/{total_batches} ({len(batch)} chunks)...")
-
-        batch_embeddings = await asyncio.to_thread(
-            _embed_batch_with_retry, batch, "RETRIEVAL_DOCUMENT"
-        )
-        all_embeddings.extend(batch_embeddings)
-
-        # Chờ giữa các batch (trừ batch cuối)
-        if i + BATCH_SIZE < total:
-            logger.info(f"Chờ {RATE_LIMIT_SLEEP}s trước batch tiếp theo...")
-            await asyncio.sleep(RATE_LIMIT_SLEEP)
+    completed = await asyncio.gather(
+        *(_embed_indexed_batch(batch_index, batch) for batch_index, (_, batch) in enumerate(batches))
+    )
+    completed.sort(key=lambda item: item[0])
+    all_embeddings = [vector for _, batch_vectors in completed for vector in batch_vectors]
 
     logger.info(f"Embed thành công {total} chunks.")
     return all_embeddings

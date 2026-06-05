@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from app.db.supabase_client import supabase
 from app.dependencies import get_current_user
 from app.services.embedder import embed_query
+from app.services.generation_jobs import create_generation_job
 from app.services.retriever import OUT_OF_SCOPE_WARNING, retrieve_rag_context
 
 logger = logging.getLogger(__name__)
@@ -427,20 +428,23 @@ async def generate_research_session_flashcards(
     body: GenerateFlashcardsRequest,
     user: dict = Depends(get_current_user),
 ):
-    from app.services.groq_service import generate_flashcards_from_context
-
     user_id = _get_user_id(user)
     session = _get_owned_session(session_id, user_id)
     selected = _selected_session_documents(session, body.selected_document_ids)
     rag_query = "Tạo flashcards ôn tập từ các khái niệm, luận điểm, phương pháp và kết quả quan trọng trong tài liệu đã chọn."
-    context, warning = await _load_generation_context(session, selected, rag_query)
-    try:
-        flashcards = await generate_flashcards_from_context(context, body.count)
-    except Exception as exc:
-        message = str(exc) or "Thiếu GROQ_API_KEY hoặc không thể tạo flashcards."
-        raise HTTPException(status_code=500, detail={"code": "GROQ_FAILED", "message": message}) from exc
-
-    return {"success": True, "data": {"flashcards": flashcards, "warning": warning}}
+    job = await create_generation_job(
+        job_type="flashcards",
+        resource_id=session_id,
+        user_id=user_id,
+        payload={
+            "session_id": session_id,
+            "notebook_id": session.get("notebook_id"),
+            "selected_document_ids": selected,
+            "count": body.count,
+            "rag_query": rag_query,
+        },
+    )
+    return {"success": True, "data": {"job_id": job.get("id"), "job": job}}
 
 
 @router.post("/research-sessions/{session_id}/quizzes/generate", response_model=dict)
@@ -449,21 +453,26 @@ async def generate_research_session_quiz(
     body: GenerateQuizRequest,
     user: dict = Depends(get_current_user),
 ):
-    from app.services.groq_service import generate_quiz_from_context
-
     if body.question_type not in {"mixed", "multiple_choice", "true_false"}:
         raise HTTPException(status_code=400, detail={"code": "INVALID_QUESTION_TYPE", "message": "question_type phải là mixed, multiple_choice hoặc true_false."})
     user_id = _get_user_id(user)
     session = _get_owned_session(session_id, user_id)
     selected = _selected_session_documents(session, body.selected_document_ids)
     rag_query = "Tạo câu hỏi trắc nghiệm ôn tập từ các khái niệm, luận điểm, phương pháp và kết quả quan trọng trong tài liệu đã chọn."
-    context, warning = await _load_generation_context(session, selected, rag_query)
-    try:
-        questions = await generate_quiz_from_context(context, body.count, body.question_type)
-    except Exception as exc:
-        message = str(exc) or "Thiếu GROQ_API_KEY hoặc không thể tạo quiz/test."
-        raise HTTPException(status_code=502, detail={"code": "GROQ_FAILED", "message": message}) from exc
-    return {"success": True, "data": {"quiz": {"id": f"quiz-{session_id}", "title": "Bộ câu hỏi trắc nghiệm", "questions": questions}, "questions": questions, "warning": warning}}
+    job = await create_generation_job(
+        job_type="quiz",
+        resource_id=session_id,
+        user_id=user_id,
+        payload={
+            "session_id": session_id,
+            "notebook_id": session.get("notebook_id"),
+            "selected_document_ids": selected,
+            "count": body.count,
+            "question_type": body.question_type,
+            "rag_query": rag_query,
+        },
+    )
+    return {"success": True, "data": {"job_id": job.get("id"), "job": job}}
 
 
 @router.post("/research-sessions/{session_id}/tests/generate", response_model=dict, deprecated=True)

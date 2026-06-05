@@ -6,13 +6,16 @@ from pydantic import BaseModel, Field
 
 from app.dependencies import get_current_user
 from app.services.document_parser import (
-    EmptyDocumentText,
     UnsupportedDocumentType,
     get_file_type,
-    parse_document,
+    validate_research_file,
 )
-from app.services.chunker import chunk_text
-from app.services.embedder import embed_chunks
+from app.services.indexing_service import (
+    create_queued_notebook_document,
+    index_notebook_document,
+    schedule_notebook_indexing,
+    upload_indexing_source_file,
+)
 from app.db.supabase_client import supabase
 from app.config import settings
 from app.services.activity_log_service import log_user_activity
@@ -318,7 +321,7 @@ async def upload_documents(
     results = []
 
     for file in files:
-        result = await _process_single_file(file, notebook_id, max_size_bytes, citation_threshold, tags)
+        result = await _process_single_file(file, notebook_id, max_size_bytes, citation_threshold, tags, user_id)
         if result.get("status") == "ready":
             log_user_activity(
                 user_id=user_id,
@@ -339,18 +342,25 @@ async def upload_documents(
     return {
         "success": True,
         "data": {
-            "uploaded": [r for r in results if r.get("status") == "ready"],
-            "failed": [r for r in results if r.get("status") == "error"],
+            "uploaded": [r for r in results if r.get("status") in {"ready", "processing"} or r.get("processing_status") in {"uploaded", "parsing", "chunking", "embedding", "ready"}],
+            "queued": [r for r in results if r.get("status") == "processing" or r.get("processing_status") in {"uploaded", "parsing", "chunking", "embedding"}],
+            "failed": [r for r in results if r.get("status") in {"error", "failed"}],
             "total": len(results),
         },
     }
 
 
-async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int, citation_threshold: float | None = 0, tags: str = "") -> dict:
-    """Xử lý 1 file: validate → parse → chunk → embed → insert Supabase."""
+async def _process_single_file(file: UploadFile, notebook_id: str, max_size_bytes: int, citation_threshold: float | None = 0, tags: str = "", user_id: str | None = None) -> dict:
+    """Validate and enqueue one file for indexing without blocking the upload request."""
 
     filename = normalize_upload_filename(file.filename, "uploaded-document")
     file_type = get_file_type(filename)
+
+    # Validate extension before creating a queued database row.
+    try:
+        validate_research_file(filename)
+    except UnsupportedDocumentType as exc:
+        return {"filename": filename, "file_type": file_type, "status": "error", "error": "INVALID_FILE_TYPE", "message": str(exc)}
 
     # Đọc nội dung
     try:
@@ -367,107 +377,66 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             "message": f"File quá lớn. Vui lòng chọn file dưới {max_size_bytes // 1024 // 1024}MB.",
         }
 
-    # Parse document
+    # Create lightweight metadata first so large files can be indexed in the background.
     try:
-        pages, file_type = await parse_document(contents, filename)
-        page_count = len(pages)
-    except UnsupportedDocumentType as exc:
-        return {"filename": filename, "file_type": file_type, "status": "error", "error": "INVALID_FILE_TYPE", "message": str(exc)}
-    except EmptyDocumentText as exc:
-        return {"filename": filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": str(exc)}
+        queued = await create_queued_notebook_document(
+            notebook_id=notebook_id,
+            filename=filename,
+            file_size=len(contents),
+            citation_threshold=citation_threshold,
+            tags=tags,
+        )
     except Exception:
-        logger.exception(f"Document parse failed: {filename}")
-        return {"filename": filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
+        logger.exception("Create queued document failed: %s", filename)
+        return {"filename": filename, "file_type": file_type, "status": "error", "error": "DB_INSERT_FAILED"}
 
-    # Chunk
-    try:
-        chunks = chunk_text(pages)
-        chunk_count = len(chunks)
-        if chunk_count == 0:
-            return {"filename": filename, "file_type": file_type, "status": "error", "error": "PARSE_FAILED", "message": "Không đọc được nội dung văn bản từ file này."}
-    except Exception:
-        logger.exception(f"Chunking failed: {filename}")
-        return {"filename": filename, "status": "error", "error": "CHUNK_FAILED"}
+    storage_path = None
+    if getattr(settings, "BACKGROUND_INDEXING_ENABLED", True):
+        storage_path = upload_indexing_source_file(queued["id"], filename, contents, getattr(file, "content_type", None))
 
-    # Insert document metadata
-    try:
-        document_payload = {
-            "notebook_id": notebook_id,
-            "filename": filename,
-            "file_type": file_type,
-            "page_count": page_count,
-            "chunk_count": chunk_count,
-            "status": "ready",
-            "processing_status": "ready",
-            "is_vector_ready": True,
-            "citation_threshold": _normalize_citation_threshold(citation_threshold),
-            "tags": _parse_tags(tags),
-        }
-        try:
-            resp = supabase.table("documents").insert(document_payload).execute()
-        except Exception:
-            # Backward-compatible fallback for databases that have not added file_type/status yet.
-            document_payload.pop("file_type", None)
-            document_payload.pop("status", None)
-            document_payload.pop("processing_status", None)
-            document_payload.pop("is_vector_ready", None)
-            document_payload.pop("citation_threshold", None)
-            document_payload.pop("tags", None)
-            resp = supabase.table("documents").insert(document_payload).execute()
-    except Exception:
-        logger.exception(f"Insert document failed: {filename}")
-        return {"filename": filename, "status": "error", "error": "DB_INSERT_FAILED"}
-
-    data, error = _supabase_response_data(resp)
-    if error or not data:
-        return {"filename": filename, "status": "error", "error": "DB_INSERT_FAILED"}
-
-    doc_id = data[0]["id"]
-    created_at = data[0]["created_at"]
-
-    # Embed chunks
-    try:
-        texts = [c["content"] for c in chunks]
-        embeddings = await embed_chunks(texts)
-    except Exception:
-        logger.exception(f"Embedding failed: {filename}")
-        supabase.table("documents").delete().eq("id", doc_id).execute()
-        return {"filename": filename, "status": "error", "error": "EMBED_FAILED"}
-
-    # Insert chunks + embeddings
-    try:
-        chunk_rows = [
-            {
-                "doc_id": doc_id,
-                "notebook_id": notebook_id,          # ← thêm notebook_id để search nhanh
-                "section": chunks[i].get("section", "Unknown"),
-                "content": chunks[i]["content"],
-                "page_number": chunks[i]["page_number"],
-                "chunk_index": i,
-                "embedding": "[" + ",".join(map(str, embeddings[i])) + "]",
-            }
-            for i in range(len(chunks))
-        ]
-        supabase.table("document_chunks").insert(chunk_rows).execute()
-    except Exception:
-        logger.exception(f"Insert chunks failed: {filename}")
-        supabase.table("documents").delete().eq("id", doc_id).execute()
-        return {"filename": filename, "status": "error", "error": "CHUNK_INSERT_FAILED"}
-
-    return {
+    task_kwargs = {
+        "doc_id": queued["id"],
+        "notebook_id": notebook_id,
         "filename": filename,
-        "doc_id": doc_id,
-        "id": doc_id,
-        "file_type": file_type,
-        "page_count": page_count,
-        "chunk_count": chunk_count,
-        "size": len(contents),
-        "created_at": created_at,
-        "status": "ready",
-        "processing_status": "ready",
-        "processing_error": None,
-        "is_vector_ready": True,
+        "contents": contents if not storage_path else None,
+        "storage_path": storage_path,
+        "citation_threshold": citation_threshold,
+        "tags": tags,
+        "user_id": user_id,
     }
+
+    if getattr(settings, "BACKGROUND_INDEXING_ENABLED", True):
+        job = await schedule_notebook_indexing(**task_kwargs)
+        return {
+            **queued,
+            "status": "processing",
+            "processing_status": queued.get("processing_status") or "uploaded",
+            "indexing_job_id": job.get("id"),
+            "indexing_job": job,
+            "message": "Tài liệu đã được đưa vào hàng đợi index. Bạn có thể tiếp tục làm việc trong khi hệ thống xử lý nền.",
+        }
+
+    try:
+        updated = await index_notebook_document(
+            doc_id=queued["id"],
+            notebook_id=notebook_id,
+            filename=filename,
+            contents=contents,
+            citation_threshold=citation_threshold,
+            tags=tags,
+        )
+        return {
+            **queued,
+            "file_type": updated.get("file_type") or queued.get("file_type"),
+            "page_count": updated.get("page_count") or 0,
+            "chunk_count": updated.get("chunk_count") or 0,
+            "status": updated.get("status") or "ready",
+            "processing_status": updated.get("processing_status") or "ready",
+            "processing_error": updated.get("processing_error"),
+            "is_vector_ready": updated.get("is_vector_ready") if updated.get("is_vector_ready") is not None else True,
+        }
+    except Exception:
+        return {**queued, "status": "failed", "processing_status": "failed", "is_vector_ready": False, "error": "INDEX_FAILED"}
 
 
 @router.get("/{notebook_id}/documents", response_model=dict)
@@ -651,7 +620,9 @@ async def link_system_document_to_notebook(
             for index, chunk in enumerate(chunks)
             if chunk.get("content")
         ]
-        supabase.table("document_chunks").insert(chunk_rows).execute()
+        batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+        for start in range(0, len(chunk_rows), batch_size):
+            supabase.table("document_chunks").insert(chunk_rows[start : start + batch_size]).execute()
     except Exception as exc:
         logger.exception("Copy system chunks into notebook failed")
         supabase.table("documents").delete().eq("id", linked_doc_id).execute()

@@ -7,11 +7,13 @@ from typing import Any, Dict, List
 import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 # Chunking configuration
-CHUNK_SIZE = 500        # token (~1–2 đoạn văn học thuật)
-CHUNK_OVERLAP = 50      # token (giữ context tại ranh giới chunk)
+CHUNK_SIZE = settings.CHUNK_SIZE        # token (~1–2 đoạn văn học thuật)
+CHUNK_OVERLAP = settings.CHUNK_OVERLAP      # token (giữ context tại ranh giới chunk)
 
 # Chunk ngắn hơn ngưỡng này thường là header, page number, caption lẻ...
 # → nhiễu khi vector search, bỏ qua luôn

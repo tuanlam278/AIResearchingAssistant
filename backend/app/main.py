@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import documents, chat, auth, notebooks, notes, workspaces, research_sessions, system_library, admin, cross_analysis, academic_lens, profile
+from app.routers import documents, chat, auth, notebooks, notes, workspaces, research_sessions, system_library, admin, cross_analysis, academic_lens, profile, indexing, generation
 from app.config import settings
 
 app = FastAPI(
@@ -29,9 +29,31 @@ app.include_router(research_sessions.router, prefix="/api", tags=["research-sess
 app.include_router(system_library.router, prefix="/api/system-library", tags=["system-library"])
 app.include_router(cross_analysis.router, prefix="/api/cross-analysis", tags=["cross-analysis"])
 app.include_router(academic_lens.router, prefix="/api/academic-lens", tags=["academic-lens"])
+app.include_router(indexing.router, prefix="/api/indexing-jobs", tags=["indexing"])
+app.include_router(generation.router, prefix="/api/generation-jobs", tags=["generation"])
 app.include_router(admin.router)
 
 
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "version": "2.0.0"}
+
+@app.on_event("startup")
+async def start_background_workers():
+    if settings.INDEXING_WORKER_ENABLED:
+        from app.services.indexing_jobs import start_indexing_worker
+
+        start_indexing_worker()
+    if settings.GENERATION_WORKER_ENABLED:
+        from app.services.generation_jobs import start_generation_worker
+
+        start_generation_worker()
+
+
+@app.on_event("shutdown")
+async def stop_background_workers():
+    from app.services.indexing_jobs import stop_indexing_worker
+    from app.services.generation_jobs import stop_generation_worker
+
+    await stop_indexing_worker()
+    await stop_generation_worker()

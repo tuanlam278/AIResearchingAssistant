@@ -3,10 +3,12 @@ LLM generation với Llama 3.3 70B via Groq
 """
 import json
 import logging
+import time
 import tiktoken
 from groq import AsyncGroq
 from app.config import settings
 from app.models.schemas import ChatMessage
+from app.services.observability import emit_metric
 from typing import List, AsyncGenerator
 
 logger = logging.getLogger(__name__)
@@ -14,8 +16,8 @@ logger = logging.getLogger(__name__)
 client = AsyncGroq(api_key=settings.GROQ_API_KEY)
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-MAX_PROMPT_TOKENS = 6000 
-RESERVED_HISTORY_TOKENS = 1000
+MAX_PROMPT_TOKENS = int(getattr(settings, "MAX_PROMPT_TOKENS", 12000) or 12000)
+RESERVED_HISTORY_TOKENS = int(getattr(settings, "RESERVED_HISTORY_TOKENS", 1500) or 1500)
 
 try:
     _tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -136,11 +138,21 @@ async def generate_answer(
         RuntimeError: Khi Groq API thất bại.
     """
     messages = _build_messages(question, chunks, chat_history, allow_general_answer=allow_general_answer)
+    started = time.perf_counter()
     try:
         response = await client.chat.completions.create(
             model=GROQ_MODEL,
             messages=messages,
             temperature=0.0,
+        )
+        emit_metric(
+            "llm.completed",
+            model=GROQ_MODEL,
+            mode="non_stream",
+            total_latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            prompt_tokens=response.usage.prompt_tokens if response.usage else None,
+            completion_tokens=response.usage.completion_tokens if response.usage else None,
+            total_tokens=response.usage.total_tokens if response.usage else None,
         )
         return {
             "text": response.choices[0].message.content,
@@ -172,6 +184,9 @@ async def generate_answer_stream(
         RuntimeError: Khi Groq API thất bại.
     """
     messages = _build_messages(question, chunks, chat_history, allow_general_answer=allow_general_answer)
+    started = time.perf_counter()
+    first_token_at = None
+    token_count = 0
     try:
         stream = await client.chat.completions.create(
             model=GROQ_MODEL,
@@ -182,7 +197,18 @@ async def generate_answer_stream(
         async for chunk in stream:
             token = chunk.choices[0].delta.content
             if token:
+                if first_token_at is None:
+                    first_token_at = time.perf_counter()
+                token_count += 1
                 yield token
+        emit_metric(
+            "llm.completed",
+            model=GROQ_MODEL,
+            mode="stream",
+            total_latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            time_to_first_token_ms=round((first_token_at - started) * 1000, 2) if first_token_at else None,
+            streamed_chunks=token_count,
+        )
     except Exception as e:
         logger.error(f"Groq API error (stream): {e}")
         raise RuntimeError(f"LLM_FAILED: {e}") from e
@@ -314,6 +340,7 @@ async def generate_workspace_summary(documents: List[dict]) -> dict:
         + "\n\n---\n\n".join(document_blocks)
     )
 
+    started = time.perf_counter()
     try:
         response = await client.chat.completions.create(
             model=GROQ_MODEL,
