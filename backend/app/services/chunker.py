@@ -101,7 +101,12 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     for page in pages:
         page_number = int(page.get("page_number", 0))
-        content = str(page.get("content", "")).strip()
+        content = str(page.get("markdown") or page.get("content", "")).strip()
+        source_blocks = page.get("blocks") or []
+        page_block_types = sorted({str(block.get("block_type") or "unknown") for block in source_blocks})
+        page_block_ids = [str(block.get("id") or f"p{page_number}-b{block.get('block_index', idx)}") for idx, block in enumerate(source_blocks)]
+        contains_table = "table" in page_block_types
+        contains_equation = "equation" in page_block_types or "$$" in content or "$" in content
 
         if not content:
             skipped_pages += 1
@@ -127,12 +132,20 @@ def chunk_text(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     current_section = match.group(1).title()
                     break # Phát hiện rồi thì không cần check dòng tiếp theo nữa
 
+            chunk_block_types = [block_type for block_type in page_block_types if block_type != "unknown"] or page_block_types
             chunks.append(
                 {
                     "chunk_index": chunk_index,
                     "page_number": page_number,
+                    "page_start": page_number,
+                    "page_end": page_number,
                     "section": current_section,
                     "content": cleaned,
+                    "markdown": cleaned,
+                    "block_types": chunk_block_types,
+                    "block_ids": page_block_ids,
+                    "contains_table": contains_table or "| ---" in cleaned,
+                    "contains_equation": contains_equation or "$$" in cleaned or "$" in cleaned,
                 }
             )
             chunk_index += 1

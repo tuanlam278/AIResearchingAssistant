@@ -136,6 +136,10 @@ def _normalize_temp_document(temp_id: str, filename: str, file_type: str, chunks
             "page_number": chunk.get("page_number"),
             "section": chunk.get("section"),
             "content": _clean_text(chunk.get("content"), 900),
+            "markdown": chunk.get("markdown") or chunk.get("content"),
+            "block_types": chunk.get("block_types") or [],
+            "contains_table": bool(chunk.get("contains_table")),
+            "contains_equation": bool(chunk.get("contains_equation")),
         }
         for chunk in chunks[:MAX_SNIPPETS]
     ]
@@ -185,13 +189,22 @@ def _load_system_document(document_id: str) -> dict[str, Any]:
             .single()
             .execute()
         )
-        chunks_resp = (
-            supabase.table("system_document_chunks")
-            .select("id, content, page_start, page_end, embedding")
-            .eq("document_id", document_id)
-            .limit(500)
-            .execute()
-        )
+        try:
+            chunks_resp = (
+                supabase.table("system_document_chunks")
+                .select("id, content, page_start, page_end, embedding, block_types, contains_table, contains_equation, markdown")
+                .eq("document_id", document_id)
+                .limit(500)
+                .execute()
+            )
+        except Exception:
+            chunks_resp = (
+                supabase.table("system_document_chunks")
+                .select("id, content, page_start, page_end, embedding")
+                .eq("document_id", document_id)
+                .limit(500)
+                .execute()
+            )
     except Exception as exc:
         logger.exception("Load System Library document for cross-analysis failed")
         raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Không thể đọc tài liệu hệ thống."}) from exc
@@ -207,11 +220,15 @@ def _load_system_document(document_id: str) -> dict[str, Any]:
         {
             "id": chunk.get("id"),
             "content": chunk.get("content") or "",
+            "markdown": chunk.get("markdown") or chunk.get("content") or "",
             "page_number": chunk.get("page_start") or 1,
             "page_start": chunk.get("page_start"),
             "page_end": chunk.get("page_end"),
             "section": "System Library",
             "embedding": chunk.get("embedding"),
+            "block_types": chunk.get("block_types") or [],
+            "contains_table": bool(chunk.get("contains_table")),
+            "contains_equation": bool(chunk.get("contains_equation")),
         }
         for chunk in (chunk_rows or [])
         if chunk.get("content")

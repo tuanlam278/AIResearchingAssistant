@@ -68,13 +68,13 @@ export default function AcademicDocumentViewer({ document, snipping, onStopSnipp
           <span className="al-doc-kind">{pdf ? 'PDF text mode · selection/citation giống DOCX/MD' : `${String(document.file_type || 'DOC').toUpperCase()} preview từ nội dung đã trích xuất`}</span>
           {pdf && document.preview_url && <a className="al-original-pdf-link" href={document.preview_url} target="_blank" rel="noreferrer">Mở bản PDF gốc trong tab mới</a>}
           <h1>{document.title || document.filename}</h1>
-          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section}</span><p>{activeCitation.snippet}</p></aside>}
+          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section} · {activeCitation.block_type || 'paragraph'}{activeCitation.source ? ` · ${activeCitation.source}` : ''}</span><pre>{activeCitation.markdown || activeCitation.snippet}</pre></aside>}
           <pre>{previewText(document)}</pre>
         </article>
       ) : pdf && document.preview_url ? (
         <>
           <div className="al-viewer-warning"><AlertTriangle size={14} /> PDF này chưa có text trích xuất nên đang dùng iframe fallback. Upload lại hoặc kiểm tra parser để bật PDF text mode cho selection/citation giống DOCX/MD.</div>
-          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section}</span><p>{activeCitation.snippet}</p></aside>}
+          {activeCitation && <aside ref={citationRef} className="al-source-preview"><strong>Nguồn đang kiểm chứng · tr. {activeCitation.page_start}{activeCitation.page_end && activeCitation.page_end !== activeCitation.page_start ? `-${activeCitation.page_end}` : ''}</strong><span>{activeCitation.section} · {activeCitation.block_type || 'paragraph'}{activeCitation.source ? ` · ${activeCitation.source}` : ''}</span><pre>{activeCitation.markdown || activeCitation.snippet}</pre></aside>}
           <iframe className="al-pdf-frame app-scrollbar" src={`${document.preview_url}#toolbar=1&navpanes=1&scrollbar=1&view=FitH`} title={document.title || 'PDF preview'} />
         </>
       ) : (

@@ -21,6 +21,7 @@ from app.services.document_parser import (
 from app.services.document_intelligence import build_document_intelligence, persist_document_intelligence
 from app.services.embedder import embed_chunks
 from app.services.indexing_jobs import create_indexing_job, create_memory_indexing_job, report_indexing_progress
+from app.services.document_structure_service import normalize_plain_text, page_blocks
 from app.services.observability import emit_metric, metric_timer
 
 logger = logging.getLogger(__name__)
@@ -224,13 +225,65 @@ async def _delete_document_chunks(doc_id: str) -> None:
     await asyncio.to_thread(_call)
 
 
+async def _replace_document_structure(doc_id: str, pages: list[dict]) -> None:
+    """Persist page/block Markdown when optional structured tables exist; never fail indexing."""
+    page_rows = [
+        {
+            "document_id": doc_id,
+            "page": int(page.get("page") or page.get("page_number") or index),
+            "markdown": str(page.get("markdown") or page.get("content") or ""),
+            "plain_text": str(page.get("plain_text") or normalize_plain_text(page.get("markdown") or page.get("content") or "")),
+        }
+        for index, page in enumerate(pages, start=1)
+        if str(page.get("markdown") or page.get("content") or "").strip()
+    ]
+    block_rows = [
+        {
+            "document_id": doc_id,
+            "page": int(block.get("page") or 1),
+            "block_index": int(block.get("block_index") or 0),
+            "block_type": block.get("block_type") or "unknown",
+            "section": block.get("section"),
+            "markdown": block.get("markdown") or "",
+            "plain_text": block.get("text") or normalize_plain_text(block.get("markdown") or ""),
+            "bbox": block.get("bbox"),
+            "confidence": block.get("confidence"),
+            "source": block.get("source") or "unknown",
+        }
+        for block in page_blocks(pages)
+        if str(block.get("markdown") or "").strip()
+    ]
+    batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+
+    def _call() -> None:
+        try:
+            supabase.table("document_pages").delete().eq("document_id", doc_id).execute()
+            supabase.table("document_blocks").delete().eq("document_id", doc_id).execute()
+            for start in range(0, len(page_rows), batch_size):
+                supabase.table("document_pages").insert(page_rows[start : start + batch_size]).execute()
+            for start in range(0, len(block_rows), batch_size):
+                supabase.table("document_blocks").insert(block_rows[start : start + batch_size]).execute()
+        except Exception as exc:
+            logger.warning("Structured document_pages/document_blocks persist skipped for %s: %s", doc_id, exc)
+
+    await asyncio.to_thread(_call)
+
+
 async def _insert_chunk_rows(rows: list[dict]) -> None:
     if not rows:
         return
     batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
 
     def _insert_batch(batch: list[dict]) -> None:
-        supabase.table("document_chunks").insert(batch).execute()
+        try:
+            supabase.table("document_chunks").insert(batch).execute()
+        except Exception as exc:
+            legacy_batch = [
+                {key: row[key] for key in ("doc_id", "notebook_id", "section", "content", "page_number", "chunk_index", "embedding") if key in row}
+                for row in batch
+            ]
+            logger.warning("Extended document chunk metadata insert failed; retrying legacy columns: %s", exc)
+            supabase.table("document_chunks").insert(legacy_batch).execute()
 
     for index in range(0, len(rows), batch_size):
         await asyncio.to_thread(_insert_batch, rows[index : index + batch_size])
@@ -311,6 +364,7 @@ async def index_notebook_document(
 
         await report_indexing_progress(job_id, stage="inserting", progress=85, message="Đang lưu vector")
         await _delete_document_chunks(doc_id)
+        await _replace_document_structure(doc_id, pages)
         chunk_rows = [
             {
                 "doc_id": doc_id,
@@ -318,7 +372,14 @@ async def index_notebook_document(
                 "section": chunks[index].get("section", "Unknown"),
                 "content": chunks[index]["content"],
                 "page_number": chunks[index].get("page_number") or 1,
+                "page_start": chunks[index].get("page_start") or chunks[index].get("page_number") or 1,
+                "page_end": chunks[index].get("page_end") or chunks[index].get("page_number") or 1,
                 "chunk_index": index,
+                "markdown": chunks[index].get("markdown") or chunks[index]["content"],
+                "block_types": chunks[index].get("block_types") or [],
+                "block_ids": chunks[index].get("block_ids") or [],
+                "contains_table": bool(chunks[index].get("contains_table")),
+                "contains_equation": bool(chunks[index].get("contains_equation")),
                 "embedding": _vector_to_string(embeddings[index]),
             }
             for index in range(len(chunks))

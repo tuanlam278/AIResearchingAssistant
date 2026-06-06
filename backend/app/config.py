@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     # Required for Academic Lens vision and scanned-PDF OCR. Keep empty unless configured in .env.
     VISION_MODEL: str = ""
+    ENABLE_PDF_VISION_FALLBACK: bool = False
+    ENABLE_ADVANCED_TABLE_EXTRACTION: bool = False
+    ENABLE_MATH_OCR: bool = False
+    MATH_OCR_PROVIDER: str = "none"
+    MATHPIX_APP_ID: str = ""
+    MATHPIX_APP_KEY: str = ""
     GROQ_API_KEY: str = ""
     GROQ_FLASHCARD_MODEL: str = "llama-3.1-8b-instant"
     WEB_SEARCH_PROVIDER: str = "duckduckgo"

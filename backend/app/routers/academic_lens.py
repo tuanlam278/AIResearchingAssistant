@@ -156,19 +156,40 @@ def _page_end(chunk: dict[str, Any]) -> int | None:
         return None
 
 
+def _primary_block_type(chunk: dict[str, Any]) -> str:
+    if chunk.get("block_type"):
+        return str(chunk.get("block_type"))
+    block_types = chunk.get("block_types") or []
+    if isinstance(block_types, str):
+        block_types = [block_types]
+    for preferred in ("table", "equation", "figure_caption", "heading", "paragraph"):
+        if preferred in block_types:
+            return preferred
+    if chunk.get("contains_table"):
+        return "table"
+    if chunk.get("contains_equation"):
+        return "equation"
+    return "paragraph"
+
+
 def _citation_from_chunk(document: dict[str, Any], chunk: dict[str, Any], score: float) -> dict[str, Any] | None:
-    snippet = _clean_text(chunk.get("content"), 650)
+    snippet = _clean_text(chunk.get("markdown") or chunk.get("content"), 650)
     page_start = _page_start(chunk)
     page_end = _page_end(chunk) or page_start
     if not snippet or page_start is None:
         return None
+    block_type = _primary_block_type(chunk)
     return {
         "document_id": str(document.get("id") or ""),
         "title": document.get("title") or document.get("filename") or "Tài liệu",
         "page_start": page_start,
         "page_end": page_end,
         "section": chunk.get("section") or "Không rõ section",
+        "block_type": block_type,
+        "block_types": chunk.get("block_types") or [block_type],
+        "source": chunk.get("source") or chunk.get("block_source"),
         "snippet": snippet,
+        "markdown": chunk.get("markdown") or chunk.get("content") or snippet,
         "score": round(max(0.0, min(float(score), 1.0)), 4),
         "chunk_id": str(chunk.get("id") or chunk.get("chunk_id") or chunk.get("chunk_index") or ""),
     }
@@ -199,7 +220,7 @@ async def _retrieve_question_chunks(document: dict[str, Any], question: str, top
 
 def _format_chunks_for_prompt(citations: list[dict[str, Any]]) -> str:
     return "\n\n".join(
-        f"[{idx}] page={c.get('page_start')}-{c.get('page_end')} section={c.get('section')} score={c.get('score')}\n{c.get('snippet')}"
+        f"[{idx}] page={c.get('page_start')}-{c.get('page_end')} section={c.get('section')} block_type={c.get('block_type')} score={c.get('score')}\n{c.get('markdown') or c.get('snippet')}"
         for idx, c in enumerate(citations, start=1)
     )
 

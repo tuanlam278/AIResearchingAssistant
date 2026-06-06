@@ -47,7 +47,7 @@ def _generate_with_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> Vi
     response = client.models.generate_content(
         model=model,
         contents=[
-            "Bạn là trợ lý phân tích ảnh học thuật. Trả lời bằng tiếng Việt, không bịa nếu ảnh không đủ thông tin.",
+            "Bạn là trợ lý phân tích ảnh học thuật. Trả lời bằng tiếng Việt, không bịa nếu ảnh không đủ thông tin. Khi người dùng yêu cầu OCR/trích xuất tài liệu, hãy trả Markdown học thuật chuẩn: bảng là Markdown table hợp lệ; công thức inline dùng `$...$`; công thức block dùng `$$ ... $$`; giữ heading/section; đánh dấu `[uncertain]` cho phần không chắc và không thêm diễn giải ngoài nội dung gốc nếu task chỉ là extraction.",
             prompt,
             types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
         ],

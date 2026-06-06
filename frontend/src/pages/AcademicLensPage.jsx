@@ -172,10 +172,13 @@ const STYLES = `
   .al-source-preview p { margin:0; line-height:1.55; }
   .al-citations-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
   .al-citation-wrap { position:relative; display:inline-flex !important; margin:0 !important; color:inherit !important; }
-  .al-citation-badge { border:1px solid rgba(196,164,100,.32); background:rgba(196,164,100,.12); color:#f2d48b; border-radius:999px; padding:3px 8px; cursor:pointer; font-weight:900; }
+  .al-citation-badge { border:1px solid rgba(196,164,100,.32); background:rgba(196,164,100,.12); color:#f2d48b; border-radius:999px; padding:3px 8px; cursor:pointer; font-weight:900; display:inline-flex; gap:5px; align-items:center; }
+  .al-citation-badge span { color:#f9e6b6; font-size:11px; }
   .al-citation-popover { position:absolute; z-index:150; left:0; top:28px; width:min(330px,78vw); display:grid !important; gap:5px !important; border:1px solid rgba(196,164,100,.28); background:#201810; box-shadow:0 18px 60px rgba(0,0,0,.55); border-radius:14px; padding:10px; color:#ded4c4 !important; }
   .al-citation-popover strong { color:#f3ebdc; }
   .al-citation-popover em, .al-citation-popover small { color:#b8ab99; font-style:normal; }
+  .al-citation-popover pre, .al-source-preview pre { margin:0; white-space:pre-wrap; overflow:auto; max-height:220px; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; background:rgba(0,0,0,.22); border-radius:10px; padding:8px; color:#ded4c4; }
+  .al-citation-popover pre.is-markdown-table { white-space:pre; }
   .al-web-used { color:#cfe9ff !important; }
   .al-context-backdrop { position:fixed; inset:0; z-index:160; background:rgba(0,0,0,.58); display:flex; justify-content:flex-end; }
   .al-context-drawer { width:min(430px,100%); height:100%; overflow:auto; background:#17130e; border-left:1px solid rgba(255,255,255,.1); padding:14px; }

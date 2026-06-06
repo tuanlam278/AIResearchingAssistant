@@ -18,6 +18,7 @@ from app.config import settings
 from app.db.supabase_client import supabase
 from app.services.chunker import chunk_text
 from app.services.document_parser import EmptyDocumentText, UnsupportedDocumentType, parse_document
+from app.services.document_structure_service import normalize_plain_text, page_blocks
 from app.services.embedder import embed_chunks, embed_query
 from app.services.indexing_jobs import create_indexing_job, report_indexing_progress
 from app.services.llm import generate_system_document_metadata
@@ -634,8 +635,54 @@ def _metadata_sample(pages: list[dict], chunks: list[dict]) -> str:
     return (first_pages + "\n\n" + sampled_chunks).strip()[:12000]
 
 
-async def _finalize_system_document_vectors(document_id: str, chunks: list[dict], document_status: str, rows: list[dict] | None = None, job_id: str | None = None) -> dict:
+async def _replace_system_document_structure(document_id: str, pages: list[dict] | None) -> None:
+    if not pages:
+        return
+    page_rows = [
+        {
+            "document_id": document_id,
+            "page": int(page.get("page") or page.get("page_number") or index),
+            "markdown": str(page.get("markdown") or page.get("content") or ""),
+            "plain_text": str(page.get("plain_text") or normalize_plain_text(page.get("markdown") or page.get("content") or "")),
+        }
+        for index, page in enumerate(pages, start=1)
+        if str(page.get("markdown") or page.get("content") or "").strip()
+    ]
+    block_rows = [
+        {
+            "document_id": document_id,
+            "page": int(block.get("page") or 1),
+            "block_index": int(block.get("block_index") or 0),
+            "block_type": block.get("block_type") or "unknown",
+            "section": block.get("section"),
+            "markdown": block.get("markdown") or "",
+            "plain_text": block.get("text") or normalize_plain_text(block.get("markdown") or ""),
+            "bbox": block.get("bbox"),
+            "confidence": block.get("confidence"),
+            "source": block.get("source") or "unknown",
+        }
+        for block in page_blocks(pages)
+        if str(block.get("markdown") or "").strip()
+    ]
+    batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+
+    def _call() -> None:
+        try:
+            supabase.table("system_document_pages").delete().eq("document_id", document_id).execute()
+            supabase.table("system_document_blocks").delete().eq("document_id", document_id).execute()
+            for start in range(0, len(page_rows), batch_size):
+                supabase.table("system_document_pages").insert(page_rows[start : start + batch_size]).execute()
+            for start in range(0, len(block_rows), batch_size):
+                supabase.table("system_document_blocks").insert(block_rows[start : start + batch_size]).execute()
+        except Exception as exc:
+            logger.warning("Structured system document persist skipped for %s: %s", document_id, exc)
+
+    await asyncio.to_thread(_call)
+
+
+async def _finalize_system_document_vectors(document_id: str, chunks: list[dict], document_status: str, rows: list[dict] | None = None, job_id: str | None = None, pages: list[dict] | None = None) -> dict:
     """Embed and persist System Library chunks; safe to run in request or background."""
+    await _replace_system_document_structure(document_id, pages)
     await report_indexing_progress(job_id, stage="embedding", progress=60, message="Đang tạo embedding thư viện")
     texts = [chunk["content"] for chunk in chunks]
     embeddings = await embed_chunks(texts)
@@ -643,8 +690,13 @@ async def _finalize_system_document_vectors(document_id: str, chunks: list[dict]
         {
             "document_id": document_id,
             "content": chunks[index]["content"],
-            "page_start": chunks[index].get("page_number"),
-            "page_end": chunks[index].get("page_number"),
+            "markdown": chunks[index].get("markdown") or chunks[index]["content"],
+            "page_start": chunks[index].get("page_start") or chunks[index].get("page_number"),
+            "page_end": chunks[index].get("page_end") or chunks[index].get("page_number"),
+            "block_types": chunks[index].get("block_types") or [],
+            "block_ids": chunks[index].get("block_ids") or [],
+            "contains_table": bool(chunks[index].get("contains_table")),
+            "contains_equation": bool(chunks[index].get("contains_equation")),
             "embedding": "[" + ",".join(map(str, embeddings[index])) + "]",
         }
         for index in range(len(chunks))
@@ -654,7 +706,16 @@ async def _finalize_system_document_vectors(document_id: str, chunks: list[dict]
     def _insert_batches() -> None:
         supabase.table("system_document_chunks").delete().eq("document_id", document_id).execute()
         for start in range(0, len(chunk_rows), batch_size):
-            supabase.table("system_document_chunks").insert(chunk_rows[start : start + batch_size]).execute()
+            batch = chunk_rows[start : start + batch_size]
+            try:
+                supabase.table("system_document_chunks").insert(batch).execute()
+            except Exception as exc:
+                legacy_batch = [
+                    {key: row[key] for key in ("document_id", "content", "page_start", "page_end", "embedding") if key in row}
+                    for row in batch
+                ]
+                logger.warning("Extended system chunk metadata insert failed; retrying legacy columns: %s", exc)
+                supabase.table("system_document_chunks").insert(legacy_batch).execute()
 
     await report_indexing_progress(job_id, stage="inserting", progress=88, message="Đang lưu vector thư viện")
     await asyncio.to_thread(_insert_batches)
@@ -701,7 +762,7 @@ async def process_system_document_indexing_job(job: dict[str, Any]) -> dict[str,
         chunks = chunk_text(pages)
         if not chunks:
             raise EmptyDocumentText("Không tạo được chunk nội dung từ file này")
-        return await _finalize_system_document_vectors(document_id, chunks, document_status, job_id=str(job.get("id")))
+        return await _finalize_system_document_vectors(document_id, chunks, document_status, job_id=str(job.get("id")), pages=pages)
     except Exception:
         try:
             supabase.table("system_documents").update({"is_vector_ready": False, "processing_status": "failed"}).eq("id", document_id).execute()
@@ -856,7 +917,7 @@ async def import_system_document_from_upload(
             )
             source = {**rows[0], "is_vector_ready": False, "processing_status": "embedding", "indexing_job_id": job.get("id")}
         else:
-            source = await _finalize_system_document_vectors(document_id, chunks, document_status, rows)
+            source = await _finalize_system_document_vectors(document_id, chunks, document_status, rows, pages=pages)
     except Exception as exc:
         logger.exception("System document embedding/chunk insert failed")
         try:

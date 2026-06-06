@@ -171,7 +171,7 @@ async def _load_neighbor_chunks(notebook_id: str, seeds: List[dict], max_extra: 
             try:
                 result = (
                     supabase.table("document_chunks")
-                    .select("id, doc_id, section, content, page_number, chunk_index")
+                    .select("id, doc_id, section, content, page_number, page_start, page_end, chunk_index, markdown, block_types, block_ids, contains_table, contains_equation")
                     .eq("notebook_id", notebook_id)
                     .eq("doc_id", str(doc_id))
                     .gte("chunk_index", max(0, index - 1))
@@ -235,16 +235,27 @@ async def load_selected_document_context(notebook_id: str, document_ids: List[st
         try:
             result = (
                 supabase.table("document_chunks")
-                .select("id, doc_id, section, content, page_number, chunk_index")
+                .select("id, doc_id, section, content, page_number, page_start, page_end, chunk_index, markdown, block_types, block_ids, contains_table, contains_equation")
                 .eq("notebook_id", notebook_id)
                 .in_("doc_id", [str(doc_id) for doc_id in document_ids])
                 .order("chunk_index", desc=False)
                 .limit(limit or settings.TOP_K_CHUNKS)
                 .execute()
             )
-        except Exception as e:
-            logger.error("Fallback selected document context failed: %s", e)
-            raise RuntimeError(f"RETRIEVAL_FAILED: {e}") from e
+        except Exception:
+            try:
+                result = (
+                    supabase.table("document_chunks")
+                    .select("id, doc_id, section, content, page_number, chunk_index")
+                    .eq("notebook_id", notebook_id)
+                    .in_("doc_id", [str(doc_id) for doc_id in document_ids])
+                    .order("chunk_index", desc=False)
+                    .limit(limit or settings.TOP_K_CHUNKS)
+                    .execute()
+                )
+            except Exception as e:
+                logger.error("Fallback selected document context failed: %s", e)
+                raise RuntimeError(f"RETRIEVAL_FAILED: {e}") from e
         return result.data or []
 
     return await asyncio.to_thread(_call)
