@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from google import genai
@@ -10,6 +11,7 @@ from app.config import settings
 
 SUPPORTED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 MAX_VISION_IMAGE_BYTES = 8 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -19,7 +21,14 @@ class VisionResult:
 
 
 def is_vision_configured() -> bool:
-    return bool(settings.GOOGLE_API_KEY.strip())
+    return bool(settings.GOOGLE_API_KEY.strip() and settings.VISION_MODEL.strip())
+
+
+def get_vision_model() -> str:
+    model = settings.VISION_MODEL.strip()
+    if not model:
+        raise RuntimeError("VISION_MODEL chưa được cấu hình.")
+    return model
 
 
 def validate_image_payload(image_bytes: bytes, mime_type: str) -> None:
@@ -33,7 +42,8 @@ def validate_image_payload(image_bytes: bytes, mime_type: str) -> None:
 
 def _generate_with_gemini(image_bytes: bytes, mime_type: str, prompt: str) -> VisionResult:
     client = genai.Client(api_key=settings.GOOGLE_API_KEY)
-    model = settings.VISION_MODEL
+    model = get_vision_model()
+    logger.info("Running Academic Lens vision request with configured VISION_MODEL=%s", model)
     response = client.models.generate_content(
         model=model,
         contents=[

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+from dataclasses import dataclass
 from typing import Any
 
 from app.config import settings
@@ -23,6 +24,19 @@ from app.services.indexing_jobs import create_indexing_job, create_memory_indexi
 from app.services.observability import emit_metric, metric_timer
 
 logger = logging.getLogger(__name__)
+
+STORAGE_CONFIG_WARNING = "Tài liệu đã được xử lý tạm thời nhưng chưa lưu bền do thiếu storage bucket. Vui lòng kiểm tra cấu hình Supabase bucket."
+
+
+@dataclass(slots=True)
+class SourceStorageResult:
+    storage_path: str | None
+    bucket: str
+    warning: dict[str, str] | None = None
+
+
+def _storage_error_detail(exc: Exception) -> str:
+    return str(exc)
 
 
 def _supabase_response_data(resp: Any) -> tuple[Any, Any]:
@@ -61,24 +75,49 @@ def _storage_object_path(document_id: str, filename: str) -> str:
     return f"notebook-documents/{document_id}/{safe_suffix}"
 
 
-def upload_indexing_source_file(document_id: str, filename: str, contents: bytes, mime_type: str | None = None) -> str | None:
-    """Persist source bytes for durable worker processing; return storage path when available."""
+def upload_indexing_source_file(document_id: str, filename: str, contents: bytes, mime_type: str | None = None) -> SourceStorageResult:
+    """Persist source bytes for durable worker processing and expose explicit config warnings."""
+    bucket = str(settings.INDEXING_STORAGE_BUCKET or settings.NOTEBOOK_STORAGE_BUCKET or "").strip()
     path = _storage_object_path(document_id, filename)
+    if not bucket:
+        logger.warning("Notebook source file was not persisted: INDEXING_STORAGE_BUCKET/NOTEBOOK_STORAGE_BUCKET is not configured (document_id=%s)", document_id)
+        return SourceStorageResult(
+            storage_path=None,
+            bucket="",
+            warning={"code": "INDEXING_STORAGE_BUCKET_NOT_CONFIGURED", "message": STORAGE_CONFIG_WARNING},
+        )
+
     content_type = mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
     try:
-        supabase.storage.from_(settings.INDEXING_STORAGE_BUCKET).upload(
+        supabase.storage.from_(bucket).upload(
             path,
             contents,
             {"content-type": content_type, "upsert": "true"},
         )
-        return path
+        return SourceStorageResult(storage_path=path, bucket=bucket)
     except Exception as exc:
-        logger.warning("Could not persist notebook source file to indexing storage; falling back to in-process payload: %s", exc)
-        return None
+        detail = _storage_error_detail(exc)
+        code = "INDEXING_STORAGE_PERSIST_FAILED"
+        if "bucket not found" in detail.lower() or "404" in detail:
+            code = "INDEXING_STORAGE_BUCKET_NOT_FOUND"
+        logger.warning(
+            "Could not persist notebook source file to Supabase indexing storage bucket=%r path=%r; falling back to temporary in-process payload: %s",
+            bucket,
+            path,
+            detail,
+        )
+        return SourceStorageResult(
+            storage_path=None,
+            bucket=bucket,
+            warning={"code": code, "message": STORAGE_CONFIG_WARNING, "bucket": bucket},
+        )
 
 
 def download_indexing_source_file(storage_path: str) -> bytes:
-    return supabase.storage.from_(settings.INDEXING_STORAGE_BUCKET).download(storage_path)
+    bucket = str(settings.INDEXING_STORAGE_BUCKET or settings.NOTEBOOK_STORAGE_BUCKET or "").strip()
+    if not bucket:
+        raise RuntimeError("INDEXING_STORAGE_BUCKET_NOT_CONFIGURED")
+    return supabase.storage.from_(bucket).download(storage_path)
 
 
 async def create_notebook_indexing_job(

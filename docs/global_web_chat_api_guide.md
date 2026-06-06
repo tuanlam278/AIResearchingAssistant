@@ -34,7 +34,7 @@ Giữ các biến bắt buộc hiện có, đặc biệt là Supabase/auth/LLM:
 
 ```env
 GOOGLE_API_KEY=<google-ai-studio-key>
-VISION_MODEL=gemini-1.5-flash
+VISION_MODEL=gemini-3.1-flash-lite
 GROQ_API_KEY=<groq-key>
 GROQ_FLASHCARD_MODEL=llama-3.1-8b-instant
 SUPABASE_URL=https://xxxxxxxxxxxx.supabase.co

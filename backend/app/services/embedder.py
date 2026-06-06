@@ -3,6 +3,7 @@ Embedding service sử dụng Google Gemini Embedding.
 """
 import asyncio
 import logging
+import random
 import time
 from google import genai
 from google.genai import types
@@ -15,12 +16,13 @@ logger = logging.getLogger(__name__)
 client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KEY.strip() else None
 
 # Đưa vào settings để dễ thay đổi, không hardcode
-EMBEDDING_MODEL = getattr(settings, "EMBEDDING_MODEL", "gemini-embedding-2")
+EMBEDDING_MODEL = settings.EMBEDDING_MODEL
 EMBEDDING_DIMENSIONS = 768  # Phải khớp với schema Supabase: VECTOR(768)
-BATCH_SIZE = 100             # Giới hạn của Gemini Embedding API
-RATE_LIMIT_SLEEP = 1         # Giây chờ giữa các batch (tránh 429)
+BATCH_SIZE = settings.EMBEDDING_BATCH_SIZE
+RATE_LIMIT_SLEEP = 1         # Giây chờ giữa các batch tuần tự (tránh 429)
 MAX_RETRIES = 3              # Số lần retry khi gặp lỗi tạm thời
-EMBEDDING_CONCURRENCY = max(1, int(getattr(settings, "EMBEDDING_CONCURRENCY", 1) or 1))
+EMBEDDING_CONCURRENCY = settings.EMBEDDING_MAX_CONCURRENCY
+_embedding_semaphore = asyncio.Semaphore(EMBEDDING_CONCURRENCY)
 
 
 def _embed_batch_with_retry(
@@ -60,19 +62,26 @@ def _embed_batch_with_retry(
             return [e.values for e in result.embeddings]
 
         except ResourceExhausted as e:
-            # 429 Rate limit — chờ lâu hơn
-            wait = 60 * (attempt + 1)
+            wait = min(30, (2 ** attempt) * 5) + random.uniform(0, 1.5)
             logger.warning(
-                f"Rate limit (attempt {attempt + 1}/{retries}), chờ {wait}s... — {e}"
+                "Google embedding rate limit (attempt %s/%s), waiting %.1fs before retry: %s",
+                attempt + 1,
+                retries,
+                wait,
+                e,
             )
             time.sleep(wait)
             last_error = e
 
         except GoogleAPIError as e:
             # Lỗi API khác — exponential backoff
-            wait = 2 ** attempt
+            wait = (2 ** attempt) + random.uniform(0, 1.0)
             logger.warning(
-                f"Gemini API error (attempt {attempt + 1}/{retries}), chờ {wait}s... — {e}"
+                "Gemini embedding API error (attempt %s/%s), waiting %.1fs before retry: %s",
+                attempt + 1,
+                retries,
+                wait,
+                e,
             )
             time.sleep(wait)
             last_error = e
@@ -104,10 +113,16 @@ async def embed_chunks(texts: List[str]) -> List[List[float]]:
     total = len(texts)
     batches = [(i, texts[i : i + BATCH_SIZE]) for i in range(0, total, BATCH_SIZE)]
     total_batches = len(batches)
-    semaphore = asyncio.Semaphore(EMBEDDING_CONCURRENCY)
+    logger.info(
+        "Embedding %s chunks in %s batches (batch_size=%s, max_concurrency=%s)",
+        total,
+        total_batches,
+        BATCH_SIZE,
+        EMBEDDING_CONCURRENCY,
+    )
 
     async def _embed_indexed_batch(batch_index: int, batch: List[str]) -> tuple[int, List[List[float]]]:
-        async with semaphore:
+        async with _embedding_semaphore:
             logger.info(
                 "Embedding batch %s/%s (%s chunks, concurrency=%s)...",
                 batch_index + 1,
@@ -121,9 +136,30 @@ async def embed_chunks(texts: List[str]) -> List[List[float]]:
                 await asyncio.sleep(RATE_LIMIT_SLEEP)
             return batch_index, result
 
-    completed = await asyncio.gather(
-        *(_embed_indexed_batch(batch_index, batch) for batch_index, (_, batch) in enumerate(batches))
-    )
+    queue: asyncio.Queue[tuple[int, List[str]] | None] = asyncio.Queue()
+    for batch_index, (_, batch) in enumerate(batches):
+        queue.put_nowait((batch_index, batch))
+
+    completed: list[tuple[int, List[List[float]]]] = []
+
+    async def _worker() -> None:
+        while True:
+            item = await queue.get()
+            try:
+                if item is None:
+                    return
+                batch_index, batch = item
+                completed.append(await _embed_indexed_batch(batch_index, batch))
+            finally:
+                queue.task_done()
+
+    worker_count = min(EMBEDDING_CONCURRENCY, total_batches)
+    workers = [asyncio.create_task(_worker()) for _ in range(worker_count)]
+    await queue.join()
+    for _ in workers:
+        queue.put_nowait(None)
+    await asyncio.gather(*workers)
+
     completed.sort(key=lambda item: item[0])
     all_embeddings = [vector for _, batch_vectors in completed for vector in batch_vectors]
 
@@ -147,7 +183,8 @@ async def embed_query(text: str) -> List[float]:
     if not text or not text.strip():
         raise ValueError("Query text không được để trống.")
 
-    result = await asyncio.to_thread(
-        _embed_batch_with_retry, [text], "RETRIEVAL_QUERY"
-    )
+    async with _embedding_semaphore:
+        result = await asyncio.to_thread(
+            _embed_batch_with_retry, [text], "RETRIEVAL_QUERY"
+        )
     return result[0]

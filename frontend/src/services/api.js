@@ -9,10 +9,12 @@ const axiosInstance = axios.create({ baseURL: BASE_URL });
 
 export const REQUEST_TIMEOUTS = {
   session: 15000,
+  googleLogin: 20000,
   chat: 60000,
 };
 
 const TIMEOUT_MESSAGE = "Máy chủ phản hồi quá lâu. Vui lòng thử lại sau.";
+const GOOGLE_LOGIN_TIMEOUT_MESSAGE = "Google Login phản hồi quá lâu, vui lòng thử lại.";
 
 function timeoutConfig(timeoutMs, options = {}) {
   return {
@@ -200,7 +202,10 @@ export const api = {
 
 
   loginWithGoogle: (credential) =>
-    unwrapRequest(() => axiosInstance.post("/api/auth/google", { credential })),
+    unwrapRequest(() => axiosInstance.post("/api/auth/google", { credential }, { timeout: REQUEST_TIMEOUTS.googleLogin })).catch((error) => {
+      if (error.code === "REQUEST_TIMEOUT" || error.name === "TimeoutError") throw new Error(GOOGLE_LOGIN_TIMEOUT_MESSAGE);
+      throw error;
+    }),
 
   requestPasswordResetOtp: (email) =>
     unwrapRequest(() => axiosInstance.post("/api/auth/password-reset/request", { email })),

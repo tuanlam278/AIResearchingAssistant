@@ -1,6 +1,9 @@
 """Google Identity Services token verification helpers."""
 from __future__ import annotations
 
+import logging
+import time
+
 from fastapi import HTTPException, status
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -9,6 +12,8 @@ from app.config import settings
 
 
 GOOGLE_AUTH_ERROR = "Không thể xác thực Google."
+logger = logging.getLogger(__name__)
+_google_request = google_requests.Request()
 
 
 def verify_google_credential(credential: str) -> dict:
@@ -25,11 +30,13 @@ def verify_google_credential(credential: str) -> dict:
         )
 
     try:
+        started = time.perf_counter()
         claims = id_token.verify_oauth2_token(
             credential,
-            google_requests.Request(),
+            _google_request,
             settings.GOOGLE_CLIENT_ID,
         )
+        logger.info("Google login timing verify_token_ms=%.1f", (time.perf_counter() - started) * 1000)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

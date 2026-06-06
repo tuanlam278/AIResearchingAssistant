@@ -9,6 +9,7 @@ from google import genai
 from google.genai import types
 
 from app.config import settings
+from app.services.vision_service import get_vision_model
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ async def _extract_text_from_image(image: Image.Image, page_num: int) -> str:
     for attempt in range(1, 4):  # tối đa 3 lần
         try:
             response = await client.aio.models.generate_content(
-                model="gemini-2.5-flash",
+                model=get_vision_model(),
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                     prompt,

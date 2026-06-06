@@ -3,7 +3,9 @@
 
 from typing import Any, Dict
 
+import logging
 import secrets
+import time
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from supabase import Client, create_client
@@ -36,6 +38,7 @@ from app.services.password_reset_service import (
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 class GoogleAuthRequest(BaseModel):
@@ -716,7 +719,11 @@ async def logout(request: Request) -> Dict[str, Any]:
 
 @router.post("/google")
 async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
+    total_started = time.perf_counter()
+    logger.info("Google login timing request_received")
+    verify_started = time.perf_counter()
     claims = verify_google_credential(payload.credential)
+    logger.info("Google login timing route_verify_ms=%.1f", (time.perf_counter() - verify_started) * 1000)
 
     email = str(claims["email"])
     google_id = str(claims["sub"])
@@ -733,11 +740,15 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
             },
         )
 
+    db_started = time.perf_counter()
     profile = _profile_by_google_id(google_id)
+    logger.info("Google login timing profile_google_lookup_ms=%.1f", (time.perf_counter() - db_started) * 1000)
 
     if profile:
         user_id = str(profile["id"])
+        role_started = time.perf_counter()
         role = str(profile.get("role") or _role_from_profile(user_id) or "user")
+        logger.info("Google login timing role_lookup_ms=%.1f", (time.perf_counter() - role_started) * 1000)
 
         if profile.get("is_active") is False:
             raise HTTPException(
@@ -748,7 +759,9 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
                 },
             )
 
+        token_started = time.perf_counter()
         access_token = create_app_access_token(user_id=user_id, email=email, role=role)
+        logger.info("Google login timing token_issue_ms=%.1f total_ms=%.1f", (time.perf_counter() - token_started) * 1000, (time.perf_counter() - total_started) * 1000)
 
         return {
             "success": True,
@@ -759,7 +772,9 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
             },
         }
 
+    email_lookup_started = time.perf_counter()
     profile = _profile_by_email(email)
+    logger.info("Google login timing profile_email_lookup_ms=%.1f", (time.perf_counter() - email_lookup_started) * 1000)
     auth_user = None
 
     if profile:
@@ -776,7 +791,8 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
 
         user_id = str(profile["id"])
     else:
-        auth_user = _auth_user_by_email(email)
+        # Fast path: avoid Supabase admin.list_users(), which can be very slow on large projects.
+        auth_user = None
 
         if auth_user:
             auth_user_id = _auth_user_field(auth_user, "id")
@@ -793,6 +809,7 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
             user_id = str(auth_user_id)
         else:
             try:
+                create_started = time.perf_counter()
                 created = supabase.auth.admin.create_user(
                     {
                         "email": email,
@@ -813,6 +830,7 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
                     }
                 )
 
+                logger.info("Google login timing auth_create_user_ms=%.1f", (time.perf_counter() - create_started) * 1000)
                 user_id = _extract_auth_user_id(created)
 
                 if not user_id:
@@ -822,15 +840,24 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
                     print("SUPABASE CREATE USER .data:", getattr(created, "data", None))
                     raise RuntimeError("Supabase did not return a user id")
             except Exception as exc:
-                print(f"GOOGLE USER CREATE FAILED: {exc}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail={
-                        "code": "GOOGLE_USER_CREATE_FAILED",
-                        "message": "Không thể tạo tài khoản Google.",
-                    },
-                ) from exc
+                logger.warning("Google create user fast path failed; checking existing auth user by email: %s", exc)
+                lookup_started = time.perf_counter()
+                auth_user = _auth_user_by_email(email)
+                logger.info("Google login timing fallback_auth_user_lookup_ms=%.1f", (time.perf_counter() - lookup_started) * 1000)
+                auth_user_id = _auth_user_field(auth_user, "id") if auth_user else None
+                if auth_user_id:
+                    user_id = str(auth_user_id)
+                else:
+                    print(f"GOOGLE USER CREATE FAILED: {exc}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail={
+                            "code": "GOOGLE_USER_CREATE_FAILED",
+                            "message": "Không thể tạo tài khoản Google.",
+                        },
+                    ) from exc
 
+    profile_started = time.perf_counter()
     profile = _ensure_profile(
         user_id,
         email,
@@ -852,7 +879,10 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
         },
     )
 
+    logger.info("Google login timing profile_upsert_ms=%.1f", (time.perf_counter() - profile_started) * 1000)
+    role_started = time.perf_counter()
     role = str(profile.get("role") or _role_from_profile(user_id) or "user")
+    logger.info("Google login timing role_lookup_ms=%.1f", (time.perf_counter() - role_started) * 1000)
 
     if profile.get("is_active") is False:
         raise HTTPException(
@@ -863,7 +893,9 @@ async def google_login(payload: GoogleAuthRequest) -> Dict[str, Any]:
             },
         )
 
+    token_started = time.perf_counter()
     access_token = create_app_access_token(user_id=user_id, email=email, role=role)
+    logger.info("Google login timing token_issue_ms=%.1f total_ms=%.1f", (time.perf_counter() - token_started) * 1000, (time.perf_counter() - total_started) * 1000)
 
     return {
         "success": True,

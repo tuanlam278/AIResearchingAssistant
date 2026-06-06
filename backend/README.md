@@ -42,7 +42,7 @@ Các biến mẫu nằm trong `.env.example`.
 | Biến | Mục đích |
 | --- | --- |
 | `GOOGLE_API_KEY` | Gemini embedding, RAG generation và vision/OCR fallback |
-| `VISION_MODEL` | Model vision, mặc định `gemini-1.5-flash` |
+| `VISION_MODEL` | Model vision đọc từ `.env` (ví dụ `gemini-3.1-flash-lite`); bắt buộc cho Academic Lens vision/OCR fallback |
 | `GROQ_API_KEY` | Tạo flashcards, quiz và test |
 | `GROQ_FLASHCARD_MODEL` | Model Groq cho học liệu, mặc định `llama-3.1-8b-instant` |
 | `SUPABASE_URL` | URL Supabase project |
@@ -143,3 +143,15 @@ Hiện repo có test cho Groq service trong `tests/test_groq_service.py`. Khi th
 - Không bọc import bằng `try/except`; dependency thiếu nên được phát hiện rõ khi chạy môi trường.
 - Giữ response thành công theo format `{ "success": true, "data": ... }` và lỗi theo `detail`/`error` hiện có để frontend normalize được.
 - Khi thêm API mới, cập nhật `../docs/api_contract.md` và `frontend/src/services/api.js` nếu UI cần gọi.
+
+
+## Supabase Storage buckets
+
+Create these **private** buckets in Supabase Dashboard > Storage > Buckets, or run `docs/sql/supabase_storage_buckets.sql` with admin/service-role privileges:
+
+- `NOTEBOOK_STORAGE_BUCKET` / `INDEXING_STORAGE_BUCKET` (example: `notebook-sources`): durable source files for ResearchWorkspace notebook indexing.
+- `SYSTEM_LIBRARY_STORAGE_BUCKET` (example: `system-documents`): original files for curated/system library documents.
+- `COMMUNITY_LIBRARY_STORAGE_BUCKET` (usually same as system library bucket): user/community library uploads.
+- `AVATAR_STORAGE_BUCKET` (example: `avatars`): profile avatars.
+
+The backend uploads/downloads these objects with `SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_SERVICE_KEY`, so the buckets should remain private and do not need public read policies. If `INDEXING_STORAGE_BUCKET` is missing or points to a non-existent bucket, ResearchWorkspace upload returns a storage warning and indexes only via temporary in-process payload.

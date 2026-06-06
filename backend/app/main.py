@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import documents, chat, auth, notebooks, notes, workspaces, research_sessions, system_library, admin, cross_analysis, academic_lens, profile, indexing, generation
 from app.config import settings
+from app.services.storage_health import check_supabase_storage_buckets
 
 app = FastAPI(
     title="AI Research Assistant API",
@@ -40,6 +41,13 @@ def health_check():
 
 @app.on_event("startup")
 async def start_background_workers():
+    check_supabase_storage_buckets()
+    if settings.VISION_MODEL:
+        import logging
+        logging.getLogger(__name__).info("Configured VISION_MODEL=%s", settings.VISION_MODEL)
+    else:
+        import logging
+        logging.getLogger(__name__).warning("VISION_MODEL chưa được cấu hình; Academic Lens vision/OCR fallback sẽ bị tắt.")
     if settings.INDEXING_WORKER_ENABLED:
         from app.services.indexing_jobs import start_indexing_worker
 

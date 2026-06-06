@@ -339,12 +339,15 @@ async def upload_documents(
             )
         results.append(result)
 
+    warnings = [r.get("storage_warning") or r.get("warning") for r in results if r.get("storage_warning") or r.get("warning")]
     return {
         "success": True,
         "data": {
             "uploaded": [r for r in results if r.get("status") in {"ready", "processing"} or r.get("processing_status") in {"uploaded", "parsing", "chunking", "embedding", "ready"}],
             "queued": [r for r in results if r.get("status") == "processing" or r.get("processing_status") in {"uploaded", "parsing", "chunking", "embedding"}],
             "failed": [r for r in results if r.get("status") in {"error", "failed"}],
+            "warnings": warnings,
+            "storage_warnings": warnings,
             "total": len(results),
         },
     }
@@ -391,8 +394,11 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
         return {"filename": filename, "file_type": file_type, "status": "error", "error": "DB_INSERT_FAILED"}
 
     storage_path = None
+    storage_warning = None
     if getattr(settings, "BACKGROUND_INDEXING_ENABLED", True):
-        storage_path = upload_indexing_source_file(queued["id"], filename, contents, getattr(file, "content_type", None))
+        storage_result = upload_indexing_source_file(queued["id"], filename, contents, getattr(file, "content_type", None))
+        storage_path = storage_result.storage_path
+        storage_warning = storage_result.warning
 
     task_kwargs = {
         "doc_id": queued["id"],
@@ -413,7 +419,9 @@ async def _process_single_file(file: UploadFile, notebook_id: str, max_size_byte
             "processing_status": queued.get("processing_status") or "uploaded",
             "indexing_job_id": job.get("id"),
             "indexing_job": job,
-            "message": "Tài liệu đã được đưa vào hàng đợi index. Bạn có thể tiếp tục làm việc trong khi hệ thống xử lý nền.",
+            "storage_warning": storage_warning,
+            "warning": storage_warning,
+            "message": storage_warning.get("message") if storage_warning else "Tài liệu đã được đưa vào hàng đợi index. Bạn có thể tiếp tục làm việc trong khi hệ thống xử lý nền.",
         }
 
     try:

@@ -8,6 +8,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [googleReady, setGoogleReady] = useState(false);
   const googleButtonRef = useRef(null);
@@ -41,9 +42,9 @@ export default function LoginPage() {
     window.google.accounts.id.initialize({
       client_id: googleClientId,
       callback: async ({ credential }) => {
-        if (!credential) return;
+        if (!credential || googleLoading) return;
         setError('');
-        setLoading(true);
+        setGoogleLoading(true);
         try {
           const response = await api.loginWithGoogle(credential);
           loginContext(response.access_token, response.user);
@@ -51,12 +52,12 @@ export default function LoginPage() {
         } catch (err) {
           setError(err.message || 'Không thể xác thực Google.');
         } finally {
-          setLoading(false);
+          setGoogleLoading(false);
         }
       },
     });
     window.google.accounts.id.renderButton(googleButtonRef.current, { theme: 'outline', size: 'large', width: 340, text: 'signin_with' });
-  }, [googleReady, googleClientId, loginContext, navigate]);
+  }, [googleReady, googleClientId, googleLoading, loginContext, navigate]);
 
   if (token) return <Navigate to={user?.role === 'admin' ? '/admin' : '/home'} replace />;
 
@@ -280,7 +281,10 @@ export default function LoginPage() {
           <div className="auth-divider" />
 
           {googleClientId ? (
-            <div className="auth-google" ref={googleButtonRef} aria-label="Đăng nhập bằng Google" />
+            <div style={{ position: 'relative' }}>
+              <div className="auth-google" ref={googleButtonRef} aria-label="Đăng nhập bằng Google" style={{ pointerEvents: googleLoading ? 'none' : 'auto', opacity: googleLoading ? 0.55 : 1 }} />
+              {googleLoading && <p className="auth-google-note" role="status">Đang đăng nhập bằng Google...</p>}
+            </div>
           ) : (
             <p className="auth-google-note">Google Login cần cấu hình VITE_GOOGLE_CLIENT_ID.</p>
           )}

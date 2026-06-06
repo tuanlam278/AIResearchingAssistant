@@ -314,7 +314,7 @@ async def vision_chat(image: UploadFile = File(...), prompt: str = Form(...), do
     if not image:
         raise HTTPException(status_code=400, detail={"code": "MISSING_IMAGE", "message": "Vui lòng gửi ảnh crop để phân tích."})
     if not is_vision_configured():
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"code": "VISION_NOT_CONFIGURED", "message": "Tính năng phân tích ảnh cần cấu hình Vision API. Hãy thêm GOOGLE_API_KEY hoặc cấu hình model vision."})
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"code": "VISION_NOT_CONFIGURED", "message": "Tính năng phân tích ảnh cần cấu hình Vision API. Hãy thêm GOOGLE_API_KEY và VISION_MODEL."})
     mime_type = image.content_type or ""
     image_bytes = await image.read()
     try:

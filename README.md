@@ -120,9 +120,9 @@ Frontend mặc định chạy tại `http://localhost:5173` và gọi backend qu
 ### Backend (`backend/.env`)
 
 - `GOOGLE_API_KEY`: dùng cho Gemini embedding/LLM/vision.
-- `VISION_MODEL`: model OCR/vision fallback, mặc định `gemini-1.5-flash`.
+- `VISION_MODEL`: model OCR/vision fallback đọc từ `.env` (ví dụ `gemini-3.1-flash-lite`); không có default hardcode trong code.
 - `GROQ_API_KEY`, `GROQ_FLASHCARD_MODEL`: tạo flashcards, quiz và test.
-- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`: kết nối Supabase.
+- `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`/`SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`: kết nối Supabase.
 - `CORS_ORIGINS`: danh sách frontend origins được phép gọi API.
 - `GOOGLE_CLIENT_ID`: client ID Google Identity Services, phải khớp frontend.
 - `JWT_SECRET_KEY`: secret ký session token nội bộ cho Google login backend flow.
@@ -152,3 +152,15 @@ Frontend mặc định chạy tại `http://localhost:5173` và gọi backend qu
 - Không commit `.env`, service role key, JWT secret, SMTP password hoặc API key thật.
 - Chạy các file SQL trong `docs/sql` tương ứng với tính năng Supabase trước khi dùng đầy đủ profile, notes, research sessions và system library.
 - Nếu dùng Google login theo backend flow hiện tại, chỉ cần Google Identity Services ID token được backend verify; không bắt buộc bật Supabase Google provider cho endpoint `/api/auth/google`.
+
+
+## Supabase Storage buckets
+
+Create these **private** buckets in Supabase Dashboard > Storage > Buckets, or run `docs/sql/supabase_storage_buckets.sql` with admin/service-role privileges:
+
+- `NOTEBOOK_STORAGE_BUCKET` / `INDEXING_STORAGE_BUCKET` (example: `notebook-sources`): durable source files for ResearchWorkspace notebook indexing.
+- `SYSTEM_LIBRARY_STORAGE_BUCKET` (example: `system-documents`): original files for curated/system library documents.
+- `COMMUNITY_LIBRARY_STORAGE_BUCKET` (usually same as system library bucket): user/community library uploads.
+- `AVATAR_STORAGE_BUCKET` (example: `avatars`): profile avatars.
+
+The backend uploads/downloads these objects with `SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_SERVICE_KEY`, so the buckets should remain private and do not need public read policies. If `INDEXING_STORAGE_BUCKET` is missing or points to a non-existent bucket, ResearchWorkspace upload returns a storage warning and indexes only via temporary in-process payload.
