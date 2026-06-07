@@ -16,6 +16,7 @@ from fastapi import HTTPException, status
 
 from app.config import settings
 from app.db.supabase_client import supabase
+from app.db.supabase_retry import execute_supabase_with_retry
 from app.services.chunker import chunk_text
 from app.services.document_parser import EmptyDocumentText, UnsupportedDocumentType, parse_document
 from app.services.document_structure_service import normalize_plain_text, page_blocks
@@ -131,6 +132,20 @@ def _is_missing_table_error(exc_or_error: Any) -> bool:
 def _is_missing_column_error(exc_or_error: Any) -> bool:
     message = str(exc_or_error or "").lower()
     return any(token in message for token in ["column", "schema cache", "could not find", "does not exist"])
+
+
+def _is_range_not_satisfiable_error(exc_or_error: Any) -> bool:
+    message = str(exc_or_error or "").lower()
+    code = ""
+    if isinstance(exc_or_error, dict):
+        code = str(exc_or_error.get("code") or "").lower()
+    else:
+        code = str(getattr(exc_or_error, "code", "") or "").lower()
+    return code == "pgrst103" or "pgrst103" in message or "requested range not satisfiable" in message
+
+
+def _empty_document_page(page: int, page_size: int) -> dict:
+    return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
 
 
 def _get_user_id(user: dict) -> str:
@@ -668,12 +683,12 @@ async def _replace_system_document_structure(document_id: str, pages: list[dict]
 
     def _call() -> None:
         try:
-            supabase.table("system_document_pages").delete().eq("document_id", document_id).execute()
-            supabase.table("system_document_blocks").delete().eq("document_id", document_id).execute()
+            execute_supabase_with_retry(lambda: supabase.table("system_document_pages").delete().eq("document_id", document_id).execute(), label=f"delete system_document_pages document_id={document_id}")
+            execute_supabase_with_retry(lambda: supabase.table("system_document_blocks").delete().eq("document_id", document_id).execute(), label=f"delete system_document_blocks document_id={document_id}")
             for start in range(0, len(page_rows), batch_size):
-                supabase.table("system_document_pages").insert(page_rows[start : start + batch_size]).execute()
+                execute_supabase_with_retry(lambda batch=page_rows[start : start + batch_size]: supabase.table("system_document_pages").insert(batch).execute(), label=f"insert system_document_pages document_id={document_id}")
             for start in range(0, len(block_rows), batch_size):
-                supabase.table("system_document_blocks").insert(block_rows[start : start + batch_size]).execute()
+                execute_supabase_with_retry(lambda batch=block_rows[start : start + batch_size]: supabase.table("system_document_blocks").insert(batch).execute(), label=f"insert system_document_blocks document_id={document_id}")
         except Exception as exc:
             logger.warning("Structured system document persist skipped for %s: %s", document_id, exc)
 
@@ -701,21 +716,21 @@ async def _finalize_system_document_vectors(document_id: str, chunks: list[dict]
         }
         for index in range(len(chunks))
     ]
-    batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+    batch_size = max(1, int(getattr(settings, "SUPABASE_VECTOR_INSERT_BATCH_SIZE", getattr(settings, "INDEX_INSERT_BATCH_SIZE", 25)) or 25))
 
     def _insert_batches() -> None:
-        supabase.table("system_document_chunks").delete().eq("document_id", document_id).execute()
+        execute_supabase_with_retry(lambda: supabase.table("system_document_chunks").delete().eq("document_id", document_id).execute(), label=f"delete system_document_chunks document_id={document_id}")
         for start in range(0, len(chunk_rows), batch_size):
             batch = chunk_rows[start : start + batch_size]
             try:
-                supabase.table("system_document_chunks").insert(batch).execute()
+                execute_supabase_with_retry(lambda: supabase.table("system_document_chunks").insert(batch).execute(), label=f"insert system_document_chunks document_id={document_id}")
             except Exception as exc:
                 legacy_batch = [
                     {key: row[key] for key in ("document_id", "content", "page_start", "page_end", "embedding") if key in row}
                     for row in batch
                 ]
                 logger.warning("Extended system chunk metadata insert failed; retrying legacy columns: %s", exc)
-                supabase.table("system_document_chunks").insert(legacy_batch).execute()
+                execute_supabase_with_retry(lambda: supabase.table("system_document_chunks").insert(legacy_batch).execute(), label=f"insert legacy system_document_chunks document_id={document_id}")
 
     await report_indexing_progress(job_id, stage="inserting", progress=88, message="Đang lưu vector thư viện")
     await asyncio.to_thread(_insert_batches)
@@ -1086,27 +1101,47 @@ async def list_or_search_documents(user: dict, query_text: str = "", filters: di
         return query.range(offset, offset + page_size - 1)
 
     if bookmarked_only and not bookmarked_ids:
-        return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+        return _empty_document_page(page, page_size)
 
     try:
         resp = build_query(SYSTEM_DOCUMENT_COLUMNS).execute()
     except Exception as exc:
+        if _is_range_not_satisfiable_error(exc):
+            logger.info("System library page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, exc)
+            return _empty_document_page(page, page_size)
         if _is_missing_table_error(exc):
-            return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+            return _empty_document_page(page, page_size)
         if _is_missing_column_error(exc):
-            resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            try:
+                resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            except Exception as fallback_exc:
+                if _is_range_not_satisfiable_error(fallback_exc):
+                    logger.info("System library fallback page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, fallback_exc)
+                    return _empty_document_page(page, page_size)
+                raise
         else:
             logger.exception("List system documents failed")
             raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"}) from exc
 
     rows, error = _supabase_response_data(resp)
     if error:
+        if _is_range_not_satisfiable_error(error):
+            logger.info("System library page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, error)
+            return _empty_document_page(page, page_size)
         if _is_missing_table_error(error):
-            return {"documents": [], "page": page, "page_size": page_size, "total_count": 0, "total": 0, "has_more": False}
+            return _empty_document_page(page, page_size)
         if _is_missing_column_error(error):
-            resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            try:
+                resp = build_query(FALLBACK_SYSTEM_DOCUMENT_COLUMNS).execute()
+            except Exception as fallback_exc:
+                if _is_range_not_satisfiable_error(fallback_exc):
+                    logger.info("System library fallback page range is out of bounds (page=%s, page_size=%s): %s", page, page_size, fallback_exc)
+                    return _empty_document_page(page, page_size)
+                raise
             rows, error = _supabase_response_data(resp)
         if error:
+            if _is_range_not_satisfiable_error(error):
+                return _empty_document_page(page, page_size)
             raise HTTPException(status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Lỗi khi tải Thư viện tài liệu"})
 
     rows = rows or []

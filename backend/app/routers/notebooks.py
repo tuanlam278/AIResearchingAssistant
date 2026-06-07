@@ -17,6 +17,7 @@ from app.services.indexing_service import (
     upload_indexing_source_file,
 )
 from app.db.supabase_client import supabase
+from app.db.supabase_retry import execute_supabase_with_retry
 from app.config import settings
 from app.services.activity_log_service import log_user_activity
 from app.utils.filenames import normalize_upload_filename
@@ -628,9 +629,10 @@ async def link_system_document_to_notebook(
             for index, chunk in enumerate(chunks)
             if chunk.get("content")
         ]
-        batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+        batch_size = max(1, int(getattr(settings, "SUPABASE_VECTOR_INSERT_BATCH_SIZE", getattr(settings, "INDEX_INSERT_BATCH_SIZE", 25)) or 25))
         for start in range(0, len(chunk_rows), batch_size):
-            supabase.table("document_chunks").insert(chunk_rows[start : start + batch_size]).execute()
+            batch = chunk_rows[start : start + batch_size]
+            execute_supabase_with_retry(lambda batch=batch: supabase.table("document_chunks").insert(batch).execute(), label="copy system chunks into notebook")
     except Exception as exc:
         logger.exception("Copy system chunks into notebook failed")
         supabase.table("documents").delete().eq("id", linked_doc_id).execute()

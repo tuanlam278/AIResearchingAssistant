@@ -1,37 +1,42 @@
 # 🔬 AI Researching Assistant
 
-AI Researching Assistant là ứng dụng web hỗ trợ quản lý tài liệu học thuật, đọc hiểu tài liệu bằng RAG, ghi chú và tạo học liệu tự động. Dự án hiện gồm **FastAPI backend**, **React/Vite frontend** và **Supabase** làm lớp dữ liệu, xác thực, lưu metadata và tìm kiếm vector với pgvector.
+AI Researching Assistant là ứng dụng web hỗ trợ quản lý tài liệu học thuật, đọc hiểu tài liệu bằng RAG, ghi chú, phân tích chéo tài liệu và tạo học liệu tự động. Dự án hiện gồm **FastAPI backend**, **React/Vite frontend** và **Supabase + pgvector** làm lớp dữ liệu, xác thực, storage và tìm kiếm vector.
 
 ## Tính năng hiện có
 
-- **Xác thực người dùng**: đăng ký, đăng nhập email/mật khẩu, đăng nhập Google Identity Services, đăng xuất và quên mật khẩu bằng OTP email.
-- **Hồ sơ cá nhân**: cập nhật thông tin, avatar, đổi mật khẩu, bật/tắt email 2FA, liên kết/hủy liên kết Google, tùy chỉnh preferences, xuất dữ liệu và xóa tài khoản.
-- **Notebook / Workspace**: tạo, sửa, xóa notebook; mỗi notebook đóng vai trò workspace chứa tài liệu, phiên nghiên cứu và ghi chú.
-- **Upload tài liệu RAG**: hỗ trợ PDF, DOCX, TXT và MD; `.doc`/`.rtf` bị từ chối với hướng dẫn chuyển đổi rõ ràng.
-- **RAG Chat**: hỏi đáp trên toàn notebook hoặc một tập tài liệu đã chọn; hỗ trợ non-streaming và SSE streaming.
-- **Research Sessions**: lưu phiên nghiên cứu, lịch sử chat, notes, xuất DOCX, tạo flashcards, quiz và test bằng Groq.
-- **System Library**: thư viện tài liệu dùng chung, tìm kiếm/lọc, bookmark, tải xuống, liên kết tài liệu hệ thống vào notebook; có màn hình admin import/xóa tài liệu.
-- **Cross Analysis**: upload tài liệu để so sánh, tìm mâu thuẫn, tổng hợp và chat theo nhóm tài liệu.
-- **Academic Lens**: xem trước tài liệu, chat theo tài liệu, chat web context, vision chat từ ảnh/crop và notepad.
+- **Xác thực & hồ sơ**: đăng ký/đăng nhập email, Google Identity Services, quên mật khẩu OTP email, hồ sơ cá nhân, avatar, đổi mật khẩu, email 2FA, preferences, export/xóa tài khoản.
+- **Notebook / Research Workspace**: tạo workspace, upload tài liệu, chọn tài liệu để hỏi RAG, lưu phiên nghiên cứu, ghi chú, export DOCX và tạo flashcards/quiz/test.
+- **Upload & indexing tài liệu**: hỗ trợ PDF, DOCX, TXT, MD; `.doc`/`.rtf` được nhận diện nhưng trả hướng dẫn chuyển đổi.
+- **Structured academic parsing**: PDF được đọc local-first bằng PyMuPDF; bảng PDF text-native được ưu tiên trích xuất bằng `pdfplumber` thành Markdown table; output page/block có metadata `page`, `block_type`, `section`, `source`.
+- **Vision OCR opt-in**: Gemini Vision chỉ fallback cho PDF scan/khó đọc khi bật cấu hình rõ ràng; prompt OCR chuẩn hóa Markdown, bảng và công thức LaTeX.
+- **RAG Chat & citations**: hỏi đáp theo notebook/tài liệu đã chọn, hỗ trợ non-streaming và SSE streaming, citations có page/section/block type/snippet; bấm nguồn trong Research Workspace mở panel/modal nguồn bên phải.
+- **System Library**: thư viện tài liệu dùng chung, tìm kiếm/lọc, bookmark, tải xuống, liên kết tài liệu hệ thống vào notebook; admin có thể import/xóa tài liệu.
+- **Cross Analysis**: upload/khai thác nhiều tài liệu để so sánh, tìm mâu thuẫn, tổng hợp và chat theo nhóm tài liệu.
+- **Academic Lens**: xem trước tài liệu, Document AI, Global Web Chat, vision chat từ ảnh/crop, web context và notepad.
+- **Vận hành ổn định hơn với Supabase**: batch insert vector nhỏ hơn, timeout dài hơn và retry/backoff cho lỗi socket/network transient trong background indexing.
 
 ## Kiến trúc tổng quan
 
 ```text
 Frontend React/Vite
-  ├─ Auth, Profile, Notebooks, Research Sessions, Notes
+  ├─ Auth, Profile, Notebooks, Research Workspace, Notes
   ├─ System Library, Cross Analysis, Academic Lens
-  └─ axios/fetch → FastAPI API
+  └─ src/services/api.js → FastAPI API
 
 FastAPI Backend
   ├─ Routers: auth, profile, notebooks, documents, chat, notes, workspaces,
-  │           research_sessions, system_library, admin, cross_analysis, academic_lens
-  ├─ Services: parser, chunker, embedder, retriever, llm, Groq, Vision, email, JWT
-  └─ Supabase client
+  │           research_sessions, system_library, admin, cross_analysis,
+  │           academic_lens, indexing, generation
+  ├─ Services: document parser/structure, pdf table extraction, chunker,
+  │           embedder, retriever, LLM, Groq, Vision, email, JWT
+  └─ Supabase client + retry/backoff wrapper
 
 Supabase
   ├─ Auth + profiles
-  ├─ notebooks, documents, document_chunks, notes, research sessions
-  ├─ system library tables + storage buckets
+  ├─ notebooks, documents, document_chunks, document_pages, document_blocks
+  ├─ notes, research sessions/messages, indexing/generation jobs
+  ├─ system library tables + system_document_chunks/pages/blocks
+  ├─ private Storage buckets
   └─ pgvector RPC for semantic search
 ```
 
@@ -39,33 +44,40 @@ Supabase
 
 ```text
 Upload PDF/DOCX/TXT/MD
-  → FastAPI validate file, kiểm tra trùng tên và giới hạn dung lượng
-  → Parse tài liệu (PyMuPDF/Gemini Vision cho PDF, python-docx cho DOCX, decode text cho TXT/MD)
-  → Chunk nội dung bằng LangChain text splitter
+  → FastAPI validate file, dung lượng, trùng tên
+  → Persist source file vào Supabase Storage nếu bucket được cấu hình
+  → Parse local-first:
+      PDF: PyMuPDF text blocks + pdfplumber tables → structured Markdown
+      DOCX: paragraph/table extraction → structured Markdown
+      TXT/MD: decode text → block structure
+      Vision OCR: chỉ fallback nếu ENABLE_PDF_VISION_FALLBACK=true
+  → Chunk theo Markdown/page/block metadata
   → Embed bằng Google gemini-embedding-001
-  → Lưu documents + document_chunks vào Supabase/pgvector
+  → Insert documents/chunks/pages/blocks vào Supabase với batch nhỏ + retry
 
 User hỏi trong notebook/session
   → Embed câu hỏi
   → Supabase RPC match_chunks theo notebook và tài liệu được chọn
-  → Build prompt từ top-k chunks + chat history
-  → Gemini sinh câu trả lời
-  → Trả answer, sources/citations, suggested prompts và lưu message nếu có research_session_id
+  → Build prompt từ top-k chunks + history
+  → LLM sinh câu trả lời
+  → Trả answer + citations/page/block metadata
+  → Frontend cho phép bấm nguồn để mở panel/modal nguồn
 ```
 
 ## Công nghệ sử dụng
 
-| Lớp                   | Công nghệ                                                                         |
-| --------------------- | --------------------------------------------------------------------------------- |
-| Frontend              | React 18, Vite 5, React Router, Tailwind CSS, Axios, react-markdown, lucide-react |
-| Backend               | FastAPI, Uvicorn, Pydantic Settings, python-multipart                             |
-| Parse tài liệu        | PyMuPDF, python-docx, Gemini Vision fallback cho PDF scan/khó đọc                 |
-| Chunking              | LangChain text splitters, tiktoken                                                |
-| Embedding             | Google `gemini-embedding-001`                                                     |
-| LLM/RAG               | Gemini qua `google-genai`                                                         |
-| Flashcards/Quiz/Test  | Groq                                                                              |
-| Database/Auth/Storage | Supabase, pgvector, Storage buckets                                               |
-| Email                 | SMTP cho OTP/quên mật khẩu/2FA                                                    |
+| Lớp | Công nghệ |
+| --- | --- |
+| Frontend | React 18, Vite 5, React Router, Axios, react-markdown, lucide-react |
+| Backend | FastAPI, Uvicorn, Pydantic Settings, python-multipart |
+| Parse tài liệu | PyMuPDF, `pdfplumber`, python-docx, Pillow, Gemini Vision opt-in fallback |
+| Structured extraction | `document_pages`, `document_blocks`, Markdown table, LaTeX convention |
+| Chunking | LangChain text splitters, tiktoken fallback |
+| Embedding | Google `gemini-embedding-001` |
+| LLM/RAG | Gemini qua `google-genai` |
+| Flashcards/Quiz/Test | Groq |
+| Database/Auth/Storage | Supabase, pgvector, private Storage buckets |
+| Email | SMTP cho OTP/quên mật khẩu/2FA |
 
 ## Cấu trúc thư mục
 
@@ -73,6 +85,9 @@ User hỏi trong notebook/session
 AIResearchingAssistant/
 ├── backend/                 # FastAPI API, services, routers, tests
 │   ├── app/
+│   │   ├── db/              # Supabase client + retry helper
+│   │   ├── routers/
+│   │   └── services/        # Parser, structured extraction, RAG, jobs
 │   ├── tests/
 │   ├── .env.example
 │   ├── requirements.txt
@@ -82,10 +97,10 @@ AIResearchingAssistant/
 │   ├── .env.example
 │   ├── package.json
 │   └── README.md
-├── docs/                    # SQL, API contract, architecture, import guide
+├── docs/                    # SQL, API contract, architecture, guides
+│   ├── sql/
 │   ├── api_contract.md
-│   ├── architecture.md
-│   └── sql/
+│   └── architecture.md
 └── README.md
 ```
 
@@ -119,23 +134,33 @@ Frontend mặc định chạy tại `http://localhost:5173` và gọi backend qu
 
 ### Backend (`backend/.env`)
 
-- `GOOGLE_API_KEY`: dùng cho Gemini embedding/LLM/vision.
-- `VISION_MODEL`: model OCR/vision fallback đọc từ `.env` (ví dụ `gemini-3.1-flash-lite`); không có default hardcode trong code.
+- `GOOGLE_API_KEY`: dùng cho Gemini embedding/RAG generation và Vision nếu bật.
+- `VISION_MODEL`: model Vision đọc từ `.env`; không hardcode trong code.
+- `ENABLE_PDF_VISION_FALLBACK`: mặc định `false`; chỉ bật nếu chấp nhận gọi Vision cho PDF local extraction không đọc được.
+- `ENABLE_MATH_OCR`, `MATH_OCR_PROVIDER`, `MATHPIX_APP_ID`, `MATHPIX_APP_KEY`: Math OCR optional, mặc định tắt.
 - `GROQ_API_KEY`, `GROQ_FLASHCARD_MODEL`: tạo flashcards, quiz và test.
 - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`/`SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`: kết nối Supabase.
-- `CORS_ORIGINS`: danh sách frontend origins được phép gọi API.
-- `GOOGLE_CLIENT_ID`: client ID Google Identity Services, phải khớp frontend.
-- `JWT_SECRET_KEY`: secret ký session token nội bộ cho Google login backend flow.
-- `SMTP_*`: gửi OTP/quên mật khẩu/email 2FA.
-- `MAX_UPLOAD_MB`: giới hạn dung lượng upload.
-- `SYSTEM_LIBRARY_ADMIN_EMAIL`, `SYSTEM_LIBRARY_ADMIN_PASSWORD`, `SYSTEM_LIBRARY_STORAGE_BUCKET`: cấu hình admin/system library.
-- `AVATAR_STORAGE_BUCKET`: bucket lưu avatar.
+- `NOTEBOOK_STORAGE_BUCKET`, `INDEXING_STORAGE_BUCKET`, `SYSTEM_LIBRARY_STORAGE_BUCKET`, `COMMUNITY_LIBRARY_STORAGE_BUCKET`, `AVATAR_STORAGE_BUCKET`: storage private buckets.
+- `INDEX_INSERT_BATCH_SIZE`, `SUPABASE_VECTOR_INSERT_BATCH_SIZE`: giới hạn batch insert để tránh nghẽn socket khi indexing.
+- `SUPABASE_REQUEST_TIMEOUT_SECONDS`, `SUPABASE_STORAGE_TIMEOUT_SECONDS`, `SUPABASE_RETRY_ATTEMPTS`, `SUPABASE_RETRY_BASE_DELAY_SECONDS`: timeout/retry cho Supabase SDK.
+- `CORS_ORIGINS`, `GOOGLE_CLIENT_ID`, `JWT_SECRET_KEY`, `SMTP_*`, `MAX_UPLOAD_MB`, `RAG_*`, `TOP_K_CHUNKS`, `MIN_SIMILARITY`.
 
 ### Frontend (`frontend/.env`)
 
 - `VITE_API_URL`: base URL của FastAPI backend.
 - `VITE_MAX_UPLOAD_MB`: giới hạn upload hiển thị trên UI, nên khớp backend.
 - `VITE_GOOGLE_CLIENT_ID`: Google Identity Services OAuth Client ID.
+- `VITE_STREAM_TYPEWRITER_INTERVAL_MS`, `VITE_STREAM_TYPEWRITER_CHARS_PER_TICK`: tốc độ hiệu ứng streaming trong Research Workspace.
+
+## Supabase cần chuẩn bị
+
+Chạy các SQL trong `docs/sql` tương ứng với tính năng cần dùng. Các nhóm quan trọng:
+
+- Bảng core: profiles, notebooks, documents, notes, research sessions/messages.
+- Vector: `document_chunks`, `system_document_chunks`, extension `vector`, RPC `match_chunks`/system search.
+- Structured extraction: `docs/sql/structured_document_markdown.sql` để tạo `document_pages`, `document_blocks`, `system_document_pages`, `system_document_blocks` và thêm metadata chunk.
+- Durable jobs: `docs/sql/indexing_jobs.sql` và generation jobs nếu dùng worker nền.
+- Storage buckets: `docs/sql/supabase_storage_buckets.sql` hoặc tạo thủ công private buckets trong Dashboard.
 
 ## Tài liệu liên quan
 
@@ -150,17 +175,7 @@ Frontend mặc định chạy tại `http://localhost:5173` và gọi backend qu
 ## Ghi chú vận hành
 
 - Không commit `.env`, service role key, JWT secret, SMTP password hoặc API key thật.
-- Chạy các file SQL trong `docs/sql` tương ứng với tính năng Supabase trước khi dùng đầy đủ profile, notes, research sessions và system library.
-- Nếu dùng Google login theo backend flow hiện tại, chỉ cần Google Identity Services ID token được backend verify; không bắt buộc bật Supabase Google provider cho endpoint `/api/auth/google`.
-
-
-## Supabase Storage buckets
-
-Create these **private** buckets in Supabase Dashboard > Storage > Buckets, or run `docs/sql/supabase_storage_buckets.sql` with admin/service-role privileges:
-
-- `NOTEBOOK_STORAGE_BUCKET` / `INDEXING_STORAGE_BUCKET` (example: `notebook-sources`): durable source files for ResearchWorkspace notebook indexing.
-- `SYSTEM_LIBRARY_STORAGE_BUCKET` (example: `system-documents`): original files for curated/system library documents.
-- `COMMUNITY_LIBRARY_STORAGE_BUCKET` (usually same as system library bucket): user/community library uploads.
-- `AVATAR_STORAGE_BUCKET` (example: `avatars`): profile avatars.
-
-The backend uploads/downloads these objects with `SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_SERVICE_KEY`, so the buckets should remain private and do not need public read policies. If `INDEXING_STORAGE_BUCKET` is missing or points to a non-existent bucket, ResearchWorkspace upload returns a storage warning and indexes only via temporary in-process payload.
+- Vision OCR và Math OCR đều là opt-in; không bật nếu không muốn phát sinh chi phí API ngoài upload/indexing chủ động.
+- Bucket Supabase nên để private; backend truy cập bằng service role key.
+- Nếu `INDEXING_STORAGE_BUCKET` thiếu hoặc không tồn tại, Research Workspace upload có thể trả storage warning và chỉ index bằng payload tạm trong tiến trình.
+- Khi background indexing tài liệu lớn, giảm `SUPABASE_VECTOR_INSERT_BATCH_SIZE` nếu vẫn gặp nghẽn socket hoặc timeout mạng.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -18,6 +18,27 @@ import SystemDocumentCard from "../components/system-library/SystemDocumentCard"
 import SystemDocumentDetailModal from "../components/system-library/SystemDocumentDetailModal";
 import OpenAlexPaperCard from "../components/system-library/OpenAlexPaperCard";
 import OpenAlexPaperDetailModal from "../components/system-library/OpenAlexPaperDetailModal";
+
+
+let systemLibraryTagsCache = null;
+let systemLibraryTagsPromise = null;
+
+async function loadSystemLibraryTagsOnce(token) {
+  if (systemLibraryTagsCache) return systemLibraryTagsCache;
+  if (!systemLibraryTagsPromise) {
+    systemLibraryTagsPromise = api
+      .getSystemLibraryTags(token)
+      .then((data) => {
+        systemLibraryTagsCache = data?.tags || [];
+        return systemLibraryTagsCache;
+      })
+      .catch((error) => {
+        systemLibraryTagsPromise = null;
+        throw error;
+      });
+  }
+  return systemLibraryTagsPromise;
+}
 
 const emptyFilters = {
   peer_review_status: [],
@@ -258,6 +279,20 @@ export default function SystemLibraryPage() {
   const [paperResults, setPaperResults] = useState([]);
   const [paperLoading, setPaperLoading] = useState(false);
   const [selectedPaper, setSelectedPaper] = useState(null);
+  const requestIdRef = useRef(0);
+  const criteriaKey = useMemo(
+    () =>
+      JSON.stringify({
+        activeTab,
+        bookmarksOnly,
+        debouncedQuery,
+        filters,
+        pageSize,
+        selectedTags,
+      }),
+    [activeTab, bookmarksOnly, debouncedQuery, filters, pageSize, selectedTags],
+  );
+  const lastCriteriaKeyRef = useRef(criteriaKey);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 400);
@@ -266,6 +301,8 @@ export default function SystemLibraryPage() {
 
   const fetchDocuments = useCallback(async () => {
     if (!token || activeTab === "internet") return;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     if (activeTab === "my") setMyDocumentsLoading(true);
     else setDocumentsLoading(true);
     setError("");
@@ -289,32 +326,51 @@ export default function SystemLibraryPage() {
         { query: debouncedQuery, filters: searchFilters },
         token,
       );
+      if (requestId !== requestIdRef.current) return;
       setDocuments(result?.documents || []);
       setTotal(result?.total_count ?? result?.total ?? 0);
       setHasMore(Boolean(result?.has_more));
       if (result?.semantic_fallback) setNotice("Đang tìm theo metadata do tìm kiếm ngữ nghĩa chưa khả dụng.");
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       setDocuments([]);
       setTotal(0);
+      setHasMore(false);
       setError(err.message || "Không thể tải Thư viện tài liệu.");
     } finally {
-      setDocumentsLoading(false);
-      setMyDocumentsLoading(false);
+      if (requestId === requestIdRef.current) {
+        setDocumentsLoading(false);
+        setMyDocumentsLoading(false);
+      }
     }
   }, [token, activeTab, debouncedQuery, filters, selectedTags, bookmarksOnly, page, pageSize]);
 
-  useEffect(() => { setPage(1); }, [activeTab, debouncedQuery, filters, selectedTags, bookmarksOnly]);
+  useEffect(() => {
+    if (activeTab === "internet") return;
+    if (lastCriteriaKeyRef.current !== criteriaKey) {
+      lastCriteriaKeyRef.current = criteriaKey;
+      if (page !== 1) {
+        setPage(1);
+        return;
+      }
+    }
+    fetchDocuments();
+  }, [activeTab, criteriaKey, fetchDocuments, page]);
 
   useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
-  useEffect(() => {
-    if (token)
-      api
-        .getSystemLibraryTags(token)
-        .then((data) => setSuggestedTags(data?.tags || []))
-        .catch(() => setSuggestedTags([]));
-  }, [token, documents.length]);
+    if (!token) return;
+    let cancelled = false;
+    loadSystemLibraryTagsOnce(token)
+      .then((tags) => {
+        if (!cancelled) setSuggestedTags(tags);
+      })
+      .catch(() => {
+        if (!cancelled) setSuggestedTags([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const stats = useMemo(
     () => ({

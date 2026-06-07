@@ -10,6 +10,7 @@ from typing import Any
 
 from app.config import settings
 from app.db.supabase_client import supabase
+from app.db.supabase_retry import execute_supabase_with_retry
 from app.services.chunker import chunk_text
 from app.services.document_parser import (
     EmptyDocumentText,
@@ -220,7 +221,7 @@ async def _update_document(doc_id: str, updates: dict) -> dict | None:
 
 async def _delete_document_chunks(doc_id: str) -> None:
     def _call() -> None:
-        supabase.table("document_chunks").delete().eq("doc_id", doc_id).execute()
+        execute_supabase_with_retry(lambda: supabase.table("document_chunks").delete().eq("doc_id", doc_id).execute(), label=f"delete document_chunks doc_id={doc_id}")
 
     await asyncio.to_thread(_call)
 
@@ -257,12 +258,12 @@ async def _replace_document_structure(doc_id: str, pages: list[dict]) -> None:
 
     def _call() -> None:
         try:
-            supabase.table("document_pages").delete().eq("document_id", doc_id).execute()
-            supabase.table("document_blocks").delete().eq("document_id", doc_id).execute()
+            execute_supabase_with_retry(lambda: supabase.table("document_pages").delete().eq("document_id", doc_id).execute(), label=f"delete document_pages document_id={doc_id}")
+            execute_supabase_with_retry(lambda: supabase.table("document_blocks").delete().eq("document_id", doc_id).execute(), label=f"delete document_blocks document_id={doc_id}")
             for start in range(0, len(page_rows), batch_size):
-                supabase.table("document_pages").insert(page_rows[start : start + batch_size]).execute()
+                execute_supabase_with_retry(lambda batch=page_rows[start : start + batch_size]: supabase.table("document_pages").insert(batch).execute(), label=f"insert document_pages document_id={doc_id}")
             for start in range(0, len(block_rows), batch_size):
-                supabase.table("document_blocks").insert(block_rows[start : start + batch_size]).execute()
+                execute_supabase_with_retry(lambda batch=block_rows[start : start + batch_size]: supabase.table("document_blocks").insert(batch).execute(), label=f"insert document_blocks document_id={doc_id}")
         except Exception as exc:
             logger.warning("Structured document_pages/document_blocks persist skipped for %s: %s", doc_id, exc)
 
@@ -272,18 +273,18 @@ async def _replace_document_structure(doc_id: str, pages: list[dict]) -> None:
 async def _insert_chunk_rows(rows: list[dict]) -> None:
     if not rows:
         return
-    batch_size = max(1, int(getattr(settings, "INDEX_INSERT_BATCH_SIZE", 250) or 250))
+    batch_size = max(1, int(getattr(settings, "SUPABASE_VECTOR_INSERT_BATCH_SIZE", getattr(settings, "INDEX_INSERT_BATCH_SIZE", 25)) or 25))
 
     def _insert_batch(batch: list[dict]) -> None:
         try:
-            supabase.table("document_chunks").insert(batch).execute()
+            execute_supabase_with_retry(lambda: supabase.table("document_chunks").insert(batch).execute(), label="insert document_chunks batch")
         except Exception as exc:
             legacy_batch = [
                 {key: row[key] for key in ("doc_id", "notebook_id", "section", "content", "page_number", "chunk_index", "embedding") if key in row}
                 for row in batch
             ]
             logger.warning("Extended document chunk metadata insert failed; retrying legacy columns: %s", exc)
-            supabase.table("document_chunks").insert(legacy_batch).execute()
+            execute_supabase_with_retry(lambda: supabase.table("document_chunks").insert(legacy_batch).execute(), label="insert legacy document_chunks batch")
 
     for index in range(0, len(rows), batch_size):
         await asyncio.to_thread(_insert_batch, rows[index : index + batch_size])
