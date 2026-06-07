@@ -151,6 +151,7 @@ app/
 - Tạo RPC match chunks/search tương ứng.
 - Chạy `../docs/sql/structured_document_markdown.sql` nếu muốn lưu `document_pages`, `document_blocks`, `system_document_pages`, `system_document_blocks` và metadata chunk mở rộng.
 - Chạy SQL durable jobs nếu dùng indexing/generation workers.
+- Nếu Supabase đang tắt **Automatically expose new tables** và bật **Enable automatic RLS**, chạy thêm `../docs/sql/supabase_api_rls_hardening.sql` sau các migration schema để cấp quyền PostgREST rõ ràng cho `service_role`/`authenticated` và tạo RLS policies cho các bảng app dùng.
 - Tạo private storage buckets hoặc chạy `../docs/sql/supabase_storage_buckets.sql`.
 
 ## Supabase Storage buckets
