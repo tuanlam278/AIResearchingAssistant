@@ -23,6 +23,7 @@ from app.services.document_structure_service import normalize_plain_text, page_b
 from app.services.embedder import embed_chunks, embed_query
 from app.services.indexing_jobs import create_indexing_job, report_indexing_progress
 from app.services.llm import generate_system_document_metadata
+from app.services.supabase_storage import download_file as storage_download_file, upload_file as storage_upload_file
 
 logger = logging.getLogger(__name__)
 
@@ -544,11 +545,7 @@ def _guess_mime_type(filename: str, supplied_mime_type: str | None = None) -> st
 
 def _upload_original_file_to_storage(path: str, file_contents: bytes, mime_type: str) -> None:
     try:
-        supabase.storage.from_(settings.SYSTEM_LIBRARY_STORAGE_BUCKET).upload(
-            path,
-            file_contents,
-            {"content-type": mime_type, "upsert": "false"},
-        )
+        storage_upload_file(settings.SYSTEM_LIBRARY_STORAGE_BUCKET, path, file_contents, mime_type, upsert=False)
     except Exception as exc:
         logger.exception("Upload original system document to storage failed")
         raise HTTPException(
@@ -610,7 +607,7 @@ def get_system_document_download(document_id: str, user: dict | None = None) -> 
         except Exception:
             logger.info("Could not increment library document download_count")
         try:
-            contents = supabase.storage.from_(settings.SYSTEM_LIBRARY_STORAGE_BUCKET).download(storage_path)
+            contents = storage_download_file(settings.SYSTEM_LIBRARY_STORAGE_BUCKET, storage_path)
         except Exception as exc:
             logger.exception("Download original system document from storage failed")
             raise HTTPException(status_code=404, detail={"code": "FILE_NOT_FOUND", "message": "Không tìm thấy file để tải xuống."}) from exc
@@ -771,7 +768,7 @@ async def process_system_document_indexing_job(job: dict[str, Any]) -> dict[str,
 
     try:
         await report_indexing_progress(str(job.get("id")), stage="parsing", progress=15, message="Đang đọc tài liệu thư viện")
-        file_contents = await asyncio.to_thread(lambda: supabase.storage.from_(settings.SYSTEM_LIBRARY_STORAGE_BUCKET).download(storage_path))
+        file_contents = await asyncio.to_thread(lambda: storage_download_file(settings.SYSTEM_LIBRARY_STORAGE_BUCKET, storage_path))
         pages, _parsed_file_type = await parse_document(file_contents, filename)
         await report_indexing_progress(str(job.get("id")), stage="chunking", progress=35, message="Đang chia nhỏ tài liệu thư viện")
         chunks = chunk_text(pages)

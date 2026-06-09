@@ -17,7 +17,7 @@ Backend là dịch vụ **FastAPI** cung cấp API cho xác thực, profile, not
 ## Yêu cầu
 
 - Python 3.10+
-- Supabase project đã cấu hình bảng/RPC/storage theo các file SQL trong `../docs/sql`
+- Supabase project đã chạy `../docs/sql/complete_schema.sql` để cấu hình bảng/RPC/storage
 - Google API key cho Gemini embedding/RAG; Vision chỉ cần nếu bật OCR/Academic Lens vision
 - Groq API key nếu dùng flashcards/quiz/test
 - SMTP nếu dùng OTP/quên mật khẩu/email 2FA thật
@@ -146,17 +146,13 @@ app/
 
 ## Supabase cần chuẩn bị
 
-- Bật extension `vector`.
-- Tạo các bảng chính: profiles, notebooks, documents, document_chunks, notes, research sessions/messages, system library, password reset OTPs.
-- Tạo RPC match chunks/search tương ứng.
-- Chạy `../docs/sql/structured_document_markdown.sql` nếu muốn lưu `document_pages`, `document_blocks`, `system_document_pages`, `system_document_blocks` và metadata chunk mở rộng.
-- Chạy SQL durable jobs nếu dùng indexing/generation workers.
-- Nếu Supabase đang tắt **Automatically expose new tables** và bật **Enable automatic RLS**, chạy thêm `../docs/sql/supabase_api_rls_hardening.sql` sau các migration schema để cấp quyền PostgREST rõ ràng cho `service_role`/`authenticated` và tạo RLS policies cho các bảng app dùng.
-- Tạo private storage buckets hoặc chạy `../docs/sql/supabase_storage_buckets.sql`.
+- Chạy đúng **một lần** `../docs/sql/complete_schema.sql` trong Supabase SQL Editor trên project mới.
+- File này tự bật extension `vector`, tạo toàn bộ bảng core/system library/Academic Lens/jobs, tạo RPC `match_chunks` và `match_system_documents`, cấp grants, bật RLS policies, và tạo storage buckets (`avatars` public, các bucket tài liệu private).
+- Schema đã bao gồm `public.notebooks`, `public.documents`, `public.document_chunks`, `public.notes`; không cần chạy thêm các file SQL rời.
 
 ## Supabase Storage buckets
 
-Create these **private** buckets in Supabase Dashboard > Storage > Buckets, or run `../docs/sql/supabase_storage_buckets.sql` with admin/service-role privileges:
+`../docs/sql/complete_schema.sql` creates these buckets (`avatars` public; document buckets private) when run with admin/service-role privileges:
 
 - `NOTEBOOK_STORAGE_BUCKET` / `INDEXING_STORAGE_BUCKET` (example: `notebook-sources`): durable source files for Research Workspace notebook indexing.
 - `SYSTEM_LIBRARY_STORAGE_BUCKET` (example: `system-documents`): original files for curated/system library documents.

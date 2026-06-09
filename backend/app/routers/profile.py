@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
+import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from supabase import Client, create_client
@@ -11,10 +12,16 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.db.supabase_client import supabase
+from app.services.supabase_storage import (
+    ensure_bucket as storage_ensure_bucket,
+    public_url as storage_public_url,
+    upload_file as storage_upload_file,
+)
 from app.dependencies import get_current_user
 from app.services.google_auth_service import verify_google_credential
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
+logger = logging.getLogger(__name__)
 
 
 def _anon_client() -> Client:
@@ -200,6 +207,40 @@ async def update_me(payload: ProfileUpdateRequest, user: dict = Depends(get_curr
     return {"success": True, "data": {"user": _safe_profile(profile, user)}}
 
 
+def _storage_error_detail(exc: Exception) -> str:
+    parts = [str(exc)]
+    for attr in ("message", "code", "status_code"):
+        value = getattr(exc, attr, None)
+        if value:
+            parts.append(str(value))
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            parts.append(str(response.json()))
+        except Exception:
+            text = getattr(response, "text", None)
+            if text:
+                parts.append(str(text))
+    return " | ".join(part for part in parts if part)
+
+
+def _ensure_public_avatar_bucket(bucket: str) -> None:
+    """Best-effort guard for local/dev projects that have not run the SQL setup yet."""
+    try:
+        storage_ensure_bucket(bucket, public=True)
+    except Exception as exc:
+        logger.warning("Could not inspect/update avatar bucket %s: %s", bucket, _storage_error_detail(exc))
+
+
+def _avatar_public_url(bucket: str, path: str) -> str:
+    return storage_public_url(bucket, path)
+
+
+def _upload_avatar_file(bucket: str, path: str, content: bytes, content_type: str) -> str:
+    storage_upload_file(bucket, path, content, content_type, upsert=True)
+    return _avatar_public_url(bucket, path)
+
+
 @router.post("/avatar")
 async def upload_avatar(avatar: UploadFile = File(...), user: dict = Depends(get_current_user)) -> dict:
     if avatar.content_type not in ALLOWED_AVATAR_TYPES:
@@ -207,13 +248,25 @@ async def upload_avatar(avatar: UploadFile = File(...), user: dict = Depends(get
     content = await avatar.read()
     if len(content) > MAX_AVATAR_BYTES:
         raise HTTPException(status_code=400, detail={"code": "AVATAR_TOO_LARGE", "message": "Avatar tối đa 5MB."})
+
+    bucket = str(settings.AVATAR_STORAGE_BUCKET or "").strip()
+    if not bucket:
+        raise HTTPException(status_code=500, detail={"code": "AVATAR_BUCKET_NOT_CONFIGURED", "message": "Chưa cấu hình AVATAR_STORAGE_BUCKET."})
+
     ext = ALLOWED_AVATAR_TYPES[avatar.content_type]
     path = f"{_user_id(user)}/avatar-{uuid4().hex}.{ext}"
+    _ensure_public_avatar_bucket(bucket)
     try:
-        supabase.storage.from_(settings.AVATAR_STORAGE_BUCKET).upload(path, content, {"content-type": avatar.content_type, "upsert": "true"})
-        public_url = supabase.storage.from_(settings.AVATAR_STORAGE_BUCKET).get_public_url(path)
+        public_url = _upload_avatar_file(bucket, path, content, avatar.content_type)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail={"code": "AVATAR_UPLOAD_FAILED", "message": "Không thể upload avatar lên Supabase Storage."}) from exc
+        detail = _storage_error_detail(exc)
+        logger.exception("Avatar upload failed for user_id=%s bucket=%s path=%s detail=%s", _user_id(user), bucket, path, detail)
+        message = "Không thể upload avatar lên Supabase Storage. Kiểm tra bucket avatars đã tồn tại/public và backend đang dùng service_role key."
+        if "bucket not found" in detail.lower() or "not found" in detail.lower() or "404" in detail:
+            message = "Không tìm thấy bucket avatars trong Supabase Storage. Hãy chạy docs/sql/complete_schema.sql hoặc tạo bucket avatars public."
+        elif "row-level security" in detail.lower() or "unauthorized" in detail.lower() or "401" in detail or "403" in detail:
+            message = "Backend không có quyền upload avatar. Hãy kiểm tra SUPABASE_SERVICE_ROLE_KEY và bucket avatars."
+        raise HTTPException(status_code=500, detail={"code": "AVATAR_UPLOAD_FAILED", "message": message}) from exc
     profile = _update_profile(user, {"avatar_url": public_url})
     return {"success": True, "data": {"avatar_url": public_url, "user": _safe_profile(profile, user)}}
 

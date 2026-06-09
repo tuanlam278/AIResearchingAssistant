@@ -154,14 +154,14 @@ Frontend mặc định chạy tại `http://localhost:5173` và gọi backend qu
 
 ## Supabase cần chuẩn bị
 
-Chạy các SQL trong `docs/sql` tương ứng với tính năng cần dùng. Các nhóm quan trọng:
+Chạy đúng **một lần** file [`docs/sql/complete_schema.sql`](./docs/sql/complete_schema.sql) trong Supabase SQL Editor trên project mới. File này đã gom toàn bộ schema cần dùng:
 
-- Bảng core: profiles, notebooks, documents, notes, research sessions/messages.
-- Vector: `document_chunks`, `system_document_chunks`, extension `vector`, RPC `match_chunks`/system search.
-- Structured extraction: `docs/sql/structured_document_markdown.sql` để tạo `document_pages`, `document_blocks`, `system_document_pages`, `system_document_blocks` và thêm metadata chunk.
-- Durable jobs: `docs/sql/indexing_jobs.sql` và generation jobs nếu dùng worker nền.
-- API/RLS hardening: nếu tắt **Automatically expose new tables** và bật **Enable automatic RLS**, chạy `docs/sql/supabase_api_rls_hardening.sql` sau các schema migration để cấp quyền PostgREST rõ ràng và áp RLS policies cho các bảng bị ảnh hưởng.
-- Storage buckets: `docs/sql/supabase_storage_buckets.sql` hoặc tạo thủ công private buckets trong Dashboard.
+- Bảng core: profiles, notebooks, documents, document_chunks, notes, research sessions/messages.
+- Vector: extension `vector`, `match_chunks`, `system_document_chunks`, và `match_system_documents`.
+- Structured extraction: `document_pages`, `document_blocks`, `system_document_pages`, `system_document_blocks` và metadata chunk mở rộng.
+- Durable jobs: `indexing_jobs` và `generation_jobs`.
+- API/RLS: grants + RLS policies phù hợp cả khi Supabase bật **Automatically expose new tables** và **Enable automatic RLS**.
+- Storage buckets: `notebook-sources` và `system-documents` private, `avatars` public để ảnh profile hiển thị được bằng public URL.
 
 ## Tài liệu liên quan
 

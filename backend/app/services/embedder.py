@@ -6,7 +6,7 @@ import logging
 import random
 import time
 from google import genai
-from google.genai import types
+from google.genai import errors as genai_errors, types
 from google.api_core.exceptions import GoogleAPIError, ResourceExhausted
 from app.config import settings
 from typing import List
@@ -17,6 +17,8 @@ client = genai.Client(api_key=settings.GOOGLE_API_KEY) if settings.GOOGLE_API_KE
 
 # Đưa vào settings để dễ thay đổi, không hardcode
 EMBEDDING_MODEL = settings.EMBEDDING_MODEL
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+_ACTIVE_EMBEDDING_MODEL = str(EMBEDDING_MODEL or "").strip() or DEFAULT_EMBEDDING_MODEL
 EMBEDDING_DIMENSIONS = 768  # Phải khớp với schema Supabase: VECTOR(768)
 BATCH_SIZE = settings.EMBEDDING_BATCH_SIZE
 RATE_LIMIT_SLEEP = 1         # Giây chờ giữa các batch tuần tự (tránh 429)
@@ -47,19 +49,43 @@ def _embed_batch_with_retry(
     if client is None:
         raise RuntimeError("EMBEDDING_NOT_CONFIGURED: GOOGLE_API_KEY is required for embeddings")
 
+    global _ACTIVE_EMBEDDING_MODEL
+
     last_error: Exception = RuntimeError("Unknown embedding error")
+    model_candidates = list(dict.fromkeys([_ACTIVE_EMBEDDING_MODEL, DEFAULT_EMBEDDING_MODEL]))
 
     for attempt in range(retries):
+        for model_name in model_candidates:
+            if not model_name:
+                continue
+            try:
+                result = client.models.embed_content(
+                    model=model_name,
+                    contents=batch,
+                    config=types.EmbedContentConfig(
+                        task_type=task_type,
+                        output_dimensionality=EMBEDDING_DIMENSIONS,
+                    ),
+                )
+                if model_name != _ACTIVE_EMBEDDING_MODEL:
+                    logger.info("Embedding switched from model %s to fallback model %s", _ACTIVE_EMBEDDING_MODEL, model_name)
+                    _ACTIVE_EMBEDDING_MODEL = model_name
+                return [e.values for e in result.embeddings]
+
+            except genai_errors.ClientError as e:
+                message = str(e)
+                last_error = e
+                if "404" in message or "NOT_FOUND" in message or "not found" in message.lower() or "not supported for embedContent" in message:
+                    logger.warning(
+                        "Embedding model %s is unavailable for embedContent; trying next fallback if available: %s",
+                        model_name,
+                        e,
+                    )
+                    continue
+                raise RuntimeError(f"EMBED_FAILED: {e}") from e
+
         try:
-            result = client.models.embed_content(
-                model=EMBEDDING_MODEL,
-                contents=batch,
-                config=types.EmbedContentConfig(
-                    task_type=task_type,
-                    output_dimensionality=EMBEDDING_DIMENSIONS,
-                ),
-            )
-            return [e.values for e in result.embeddings]
+            raise last_error
 
         except ResourceExhausted as e:
             wait = min(30, (2 ** attempt) * 5) + random.uniform(0, 1.5)
@@ -85,6 +111,10 @@ def _embed_batch_with_retry(
             )
             time.sleep(wait)
             last_error = e
+
+        except genai_errors.ClientError as e:
+            logger.error("Gemini embedding model/configuration error: %s", e)
+            raise RuntimeError(f"EMBED_FAILED: {e}") from e
 
     logger.error(f"Embedding thất bại sau {retries} lần thử: {last_error}")
     raise RuntimeError(f"EMBED_FAILED: {last_error}") from last_error

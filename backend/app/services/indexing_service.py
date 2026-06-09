@@ -24,6 +24,8 @@ from app.services.embedder import embed_chunks
 from app.services.indexing_jobs import create_indexing_job, create_memory_indexing_job, report_indexing_progress
 from app.services.document_structure_service import normalize_plain_text, page_blocks
 from app.services.observability import emit_metric, metric_timer
+from app.services.supabase_storage import download_file as storage_download_file, upload_file as storage_upload_file
+from app.utils.filenames import storage_safe_filename
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,15 @@ class SourceStorageResult:
 
 def _storage_error_detail(exc: Exception) -> str:
     return str(exc)
+
+
+def _db_error_detail(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _is_route_not_found_error(exc: Exception) -> bool:
+    detail = _db_error_detail(exc).lower()
+    return (("route " in detail and " not found" in detail) or "statuscode': 404" in detail or '"statuscode":404' in detail)
 
 
 def _supabase_response_data(resp: Any) -> tuple[Any, Any]:
@@ -73,7 +84,7 @@ def _vector_to_string(vector: list[float] | str | None) -> str:
 
 
 def _storage_object_path(document_id: str, filename: str) -> str:
-    safe_suffix = (filename or "document").replace("/", "_").replace("\\", "_")
+    safe_suffix = storage_safe_filename(filename, fallback="document")
     return f"notebook-documents/{document_id}/{safe_suffix}"
 
 
@@ -91,11 +102,7 @@ def upload_indexing_source_file(document_id: str, filename: str, contents: bytes
 
     content_type = mime_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
     try:
-        supabase.storage.from_(bucket).upload(
-            path,
-            contents,
-            {"content-type": content_type, "upsert": "true"},
-        )
+        storage_upload_file(bucket, path, contents, content_type, upsert=True)
         return SourceStorageResult(storage_path=path, bucket=bucket)
     except Exception as exc:
         detail = _storage_error_detail(exc)
@@ -119,7 +126,7 @@ def download_indexing_source_file(storage_path: str) -> bytes:
     bucket = str(settings.INDEXING_STORAGE_BUCKET or settings.NOTEBOOK_STORAGE_BUCKET or "").strip()
     if not bucket:
         raise RuntimeError("INDEXING_STORAGE_BUCKET_NOT_CONFIGURED")
-    return supabase.storage.from_(bucket).download(storage_path)
+    return storage_download_file(bucket, storage_path)
 
 
 async def create_notebook_indexing_job(
@@ -202,21 +209,37 @@ async def _update_document(doc_id: str, updates: dict) -> dict | None:
     def _call() -> Any:
         try:
             return supabase.table("documents").update(clean_updates).eq("id", doc_id).execute()
-        except Exception:
+        except Exception as primary_exc:
             legacy_updates = dict(clean_updates)
             for optional_key in ("file_type", "status", "processing_status", "processing_error", "is_vector_ready", "citation_threshold", "tags"):
                 legacy_updates.pop(optional_key, None)
             if not legacy_updates:
-                return None
-            return supabase.table("documents").update(legacy_updates).eq("id", doc_id).execute()
+                raise RuntimeError(_db_error_detail(primary_exc)) from primary_exc
+            try:
+                return supabase.table("documents").update(legacy_updates).eq("id", doc_id).execute()
+            except Exception as legacy_exc:
+                if _is_route_not_found_error(legacy_exc):
+                    raise RuntimeError(
+                        "DOCUMENTS_TABLE_ROUTE_NOT_FOUND: PostgREST cannot route public.documents. "
+                        "Run docs/sql/complete_schema.sql, ensure SUPABASE_URL is the project origin, "
+                        "then restart the backend. "
+                        f"Original error: {_db_error_detail(legacy_exc)}"
+                    ) from legacy_exc
+                raise RuntimeError(_db_error_detail(legacy_exc)) from legacy_exc
 
     resp = await asyncio.to_thread(_call)
-    if resp is None:
-        return None
     rows, error = _supabase_response_data(resp)
     if error:
         raise RuntimeError(error)
     return rows[0] if rows else None
+
+
+async def _update_document_best_effort(doc_id: str, updates: dict, *, stage: str) -> dict | None:
+    try:
+        return await _update_document(doc_id, updates)
+    except Exception as exc:
+        logger.warning("Skipping non-critical document update stage=%s doc_id=%s: %s", stage, doc_id, exc)
+        return None
 
 
 async def _delete_document_chunks(doc_id: str) -> None:
@@ -344,13 +367,13 @@ async def index_notebook_document(
     """Parse, chunk, embed, and persist vectors for one notebook document."""
     try:
         await report_indexing_progress(job_id, stage="parsing", progress=10, message="Đang đọc tài liệu")
-        await _update_document(doc_id, {"status": "processing", "processing_status": "parsing", "processing_error": None, "is_vector_ready": False})
+        await _update_document_best_effort(doc_id, {"status": "processing", "processing_status": "parsing", "processing_error": None, "is_vector_ready": False}, stage="parsing")
         with metric_timer("indexing.parse", doc_id=doc_id, notebook_id=notebook_id, filename=filename, file_size=len(contents)):
             pages, file_type = await parse_document(contents, filename)
         page_count = len(pages)
 
         await report_indexing_progress(job_id, stage="chunking", progress=30, message="Đang chia nhỏ tài liệu")
-        await _update_document(doc_id, {"file_type": file_type, "page_count": page_count, "processing_status": "chunking"})
+        await _update_document_best_effort(doc_id, {"file_type": file_type, "page_count": page_count, "processing_status": "chunking"}, stage="chunking")
         with metric_timer("indexing.chunk", doc_id=doc_id, notebook_id=notebook_id, page_count=page_count) as chunk_metric:
             chunks = chunk_text(pages)
             chunk_metric["chunk_count"] = len(chunks)
@@ -358,7 +381,7 @@ async def index_notebook_document(
             raise EmptyDocumentText("Không đọc được nội dung văn bản từ file này.")
 
         await report_indexing_progress(job_id, stage="embedding", progress=55, message="Đang tạo embedding")
-        await _update_document(doc_id, {"chunk_count": len(chunks), "processing_status": "embedding"})
+        await _update_document_best_effort(doc_id, {"chunk_count": len(chunks), "processing_status": "embedding"}, stage="embedding")
         texts = [chunk["content"] for chunk in chunks]
         with metric_timer("indexing.embed", doc_id=doc_id, notebook_id=notebook_id, chunk_count=len(chunks)):
             embeddings = await embed_chunks(texts)
@@ -389,30 +412,28 @@ async def index_notebook_document(
             await _insert_chunk_rows(chunk_rows)
         intelligence = build_document_intelligence(doc_id=doc_id, notebook_id=notebook_id, filename=filename, pages=pages, chunks=chunks)
         await persist_document_intelligence(intelligence)
-        updated = await _update_document(
-            doc_id,
-            {
-                "file_type": file_type,
-                "page_count": page_count,
-                "chunk_count": len(chunks),
-                "status": "ready",
-                "processing_status": "ready",
-                "processing_error": None,
-                "is_vector_ready": True,
-                "citation_threshold": normalize_citation_threshold(citation_threshold),
-                "tags": parse_tags(tags),
-            },
-        )
+        final_updates = {
+            "file_type": file_type,
+            "page_count": page_count,
+            "chunk_count": len(chunks),
+            "status": "ready",
+            "processing_status": "ready",
+            "processing_error": None,
+            "is_vector_ready": True,
+            "citation_threshold": normalize_citation_threshold(citation_threshold),
+            "tags": parse_tags(tags),
+        }
+        updated = await _update_document_best_effort(doc_id, final_updates, stage="ready")
         await report_indexing_progress(job_id, stage="ready", progress=100, message="Index hoàn tất")
         emit_metric("indexing.completed", doc_id=doc_id, notebook_id=notebook_id, page_count=page_count, chunk_count=len(chunks), job_id=job_id)
-        return updated or {"id": doc_id, "status": "ready", "processing_status": "ready", "is_vector_ready": True}
+        return updated or {"id": doc_id, **final_updates}
     except (UnsupportedDocumentType, EmptyDocumentText) as exc:
         logger.warning("Notebook document indexing failed for %s: %s", filename, exc)
-        await _update_document(doc_id, {"status": "failed", "processing_status": "failed", "processing_error": str(exc), "is_vector_ready": False})
+        await _update_document_best_effort(doc_id, {"status": "failed", "processing_status": "failed", "processing_error": str(exc), "is_vector_ready": False}, stage="failed")
         raise
     except Exception as exc:
         logger.exception("Notebook document indexing failed for %s", filename)
-        await _update_document(doc_id, {"status": "failed", "processing_status": "failed", "processing_error": "Không thể index/vector hóa tài liệu.", "is_vector_ready": False})
+        await _update_document_best_effort(doc_id, {"status": "failed", "processing_status": "failed", "processing_error": "Không thể index/vector hóa tài liệu.", "is_vector_ready": False}, stage="failed")
         raise
 
 
